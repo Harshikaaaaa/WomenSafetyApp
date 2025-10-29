@@ -22,6 +22,7 @@ interface SafetyFactors {
   estimatedTime: string;
   highRiskAreas: string[];
   safeZones: string[];
+  policeStationsAlongRoute: Array<{name: string, lat: number, lng: number, distance: string}>;
 }
 
 const MainScreen: React.FC = () => {
@@ -44,6 +45,7 @@ const MainScreen: React.FC = () => {
         body { margin: 0; padding: 0; }
         #map { height: 100vh; width: 100vw; }
         .police-icon { background: #dc3545; border-radius: 50%; }
+        .route-police-icon { background: #28a745; border-radius: 50%; }
         .route-analysis-panel {
             position: absolute;
             bottom: 20px;
@@ -96,6 +98,13 @@ const MainScreen: React.FC = () => {
             color: #28a745;
             margin: 4px 0;
         }
+        .police-station-item {
+            background: #e8f5e8;
+            margin: 4px 0;
+            padding: 6px;
+            border-radius: 6px;
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
@@ -113,46 +122,111 @@ const MainScreen: React.FC = () => {
         }).addTo(map);
 
         var policeMarkers = [];
+        var routePoliceMarkers = [];
         var routePolyline = null;
         var startMarker = null;
         var endMarker = null;
         var currentRoute = null;
+        var allPoliceStations = [];
 
-        // Bangalore police stations
-        var policeStations = [
-            {name: "Cubbon Park PS", lat: 12.9768, lng: 77.5953},
-            {name: "Commercial Street PS", lat: 12.9815, lng: 77.6082},
-            {name: "Ashok Nagar PS", lat: 12.9784, lng: 77.5778},
-            {name: "Ulsoor PS", lat: 12.9789, lng: 77.6214},
-            {name: "HSR Layout PS", lat: 12.9116, lng: 77.6473},
-            {name: "Koramangala PS", lat: 12.9348, lng: 77.6264},
-            {name: "Jayanagar PS", lat: 12.9302, lng: 77.5834},
-            {name: "Indiranagar PS", lat: 12.9782, lng: 77.6408},
-            {name: "Whitefield PS", lat: 12.9698, lng: 77.7499},
-            {name: "Yeshwanthpur PS", lat: 13.0256, lng: 77.5485},
-            {name: "Malleshwaram PS", lat: 13.0067, lng: 77.5751},
-            {name: "Rajajinagar PS", lat: 12.9916, lng: 77.5512}
-        ];
-
-        function createPoliceIcon() {
+        function createPoliceIcon(isRoutePolice = false) {
+            var color = isRoutePolice ? '#28a745' : '#dc3545';
             return L.divIcon({
-                className: 'police-icon',
-                html: '<div style="background-color: #dc3545; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white;"></div>',
+                className: isRoutePolice ? 'route-police-icon' : 'police-icon',
+                html: '<div style="background-color: ' + color + '; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white;"></div>',
                 iconSize: [16, 16],
                 iconAnchor: [8, 8]
             });
         }
 
+        // Get police stations from OpenStreetMap using Overpass API
+        function getPoliceStationsFromOSM(bounds, callback) {
+            var southWest = bounds.getSouthWest();
+            var northEast = bounds.getNorthEast();
+            
+            var overpassQuery = \`
+                [out:json][timeout:25];
+                (
+                    node["amenity"="police"](\${southWest.lat},\${southWest.lng},\${northEast.lat},\${northEast.lng});
+                    way["amenity"="police"](\${southWest.lat},\${southWest.lng},\${northEast.lat},\${northEast.lng});
+                    relation["amenity"="police"](\${southWest.lat},\${southWest.lng},\${northEast.lat},\${northEast.lng});
+                );
+                out center;
+            \`;
+            
+            var url = 'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(overpassQuery);
+            
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    var stations = [];
+                    data.elements.forEach(element => {
+                        var lat, lng, name;
+                        
+                        if (element.type === 'node') {
+                            lat = element.lat;
+                            lng = element.lon;
+                        } else if (element.center) {
+                            lat = element.center.lat;
+                            lng = element.center.lon;
+                        } else {
+                            return; // Skip if no coordinates
+                        }
+                        
+                        name = element.tags.name || element.tags['name:en'] || 'Police Station';
+                        if (element.tags['police:type'] === 'checkpost') {
+                            name = 'Police Checkpost';
+                        }
+                        
+                        stations.push({
+                            name: name,
+                            lat: lat,
+                            lng: lng,
+                            type: element.tags['police:type'] || 'police_station'
+                        });
+                    });
+                    callback(stations);
+                })
+                .catch(error => {
+                    console.error('Error fetching police stations:', error);
+                    // Fallback to hardcoded stations
+                    callback(getHardcodedPoliceStations());
+                });
+        }
+
+        // Fallback hardcoded police stations
+        function getHardcodedPoliceStations() {
+            return [
+                {name: "Cubbon Park Police Station", lat: 12.9768, lng: 77.5953, type: "police_station"},
+                {name: "Commercial Street Police Station", lat: 12.9815, lng: 77.6082, type: "police_station"},
+                {name: "Ashok Nagar Police Station", lat: 12.9784, lng: 77.5778, type: "police_station"},
+                {name: "Ulsoor Police Station", lat: 12.9789, lng: 77.6214, type: "police_station"},
+                {name: "HSR Layout Police Station", lat: 12.9116, lng: 77.6473, type: "police_station"},
+                {name: "Koramangala Police Station", lat: 12.9348, lng: 77.6264, type: "police_station"},
+                {name: "Jayanagar Police Station", lat: 12.9302, lng: 77.5834, type: "police_station"},
+                {name: "Indiranagar Police Station", lat: 12.9782, lng: 77.6408, type: "police_station"},
+                {name: "Whitefield Police Station", lat: 12.9698, lng: 77.7499, type: "police_station"},
+                {name: "Yeshwanthpur Police Station", lat: 13.0256, lng: 77.5485, type: "police_station"}
+            ];
+        }
+
         function showPoliceStations() {
+            // Clear existing markers
             policeMarkers.forEach(marker => map.removeLayer(marker));
             policeMarkers = [];
             
-            policeStations.forEach(station => {
-                var icon = createPoliceIcon();
-                var marker = L.marker([station.lat, station.lng], { icon: icon })
-                    .bindPopup('<b>' + station.name + '</b>')
-                    .addTo(map);
-                policeMarkers.push(marker);
+            // Get current map bounds
+            var bounds = map.getBounds();
+            getPoliceStationsFromOSM(bounds, function(stations) {
+                allPoliceStations = stations;
+                
+                stations.forEach(station => {
+                    var icon = createPoliceIcon();
+                    var marker = L.marker([station.lat, station.lng], { icon: icon })
+                        .bindPopup('<b>' + station.name + '</b>')
+                        .addTo(map);
+                    policeMarkers.push(marker);
+                });
             });
         }
 
@@ -200,6 +274,9 @@ const MainScreen: React.FC = () => {
             if (routePolyline) map.removeLayer(routePolyline);
             if (startMarker) map.removeLayer(startMarker);
             if (endMarker) map.removeLayer(endMarker);
+            // Clear route police markers
+            routePoliceMarkers.forEach(marker => map.removeLayer(marker));
+            routePoliceMarkers = [];
             
             startMarker = L.marker([start.lat, start.lng])
                 .bindPopup('<b>Start: ' + start.name + '</b>')
@@ -238,8 +315,12 @@ const MainScreen: React.FC = () => {
                             end: end,
                             route: routePoints,
                             distance: (data.routes[0].distance / 1000).toFixed(2),
-                            duration: Math.floor(data.routes[0].duration / 60)
+                            duration: Math.floor(data.routes[0].duration / 60),
+                            bounds: routePolyline.getBounds()
                         };
+
+                        // Get police stations along the route
+                        findPoliceStationsAlongRoute(currentRoute);
                     }
                 })
                 .catch(error => {
@@ -257,9 +338,55 @@ const MainScreen: React.FC = () => {
                         end: end,
                         route: routePoints,
                         distance: calculateDistance(start.lat, start.lng, end.lat, end.lng).toFixed(2),
-                        duration: Math.floor((calculateDistance(start.lat, start.lng, end.lat, end.lng) / 25) * 60)
+                        duration: Math.floor((calculateDistance(start.lat, start.lng, end.lat, end.lng) / 25) * 60),
+                        bounds: routePolyline.getBounds()
                     };
+
+                    findPoliceStationsAlongRoute(currentRoute);
                 });
+        }
+
+        function findPoliceStationsAlongRoute(route) {
+            getPoliceStationsFromOSM(route.bounds, function(stations) {
+                var routePoliceStations = [];
+                var maxDistance = 1.0; // 1km radius
+                
+                stations.forEach(station => {
+                    var minDistance = Infinity;
+                    
+                    // Find minimum distance from station to any point on route
+                    route.route.forEach(point => {
+                        var distance = calculateDistance(point[0], point[1], station.lat, station.lng);
+                        if (distance < minDistance) {
+                            minDistance = distance;
+                        }
+                    });
+                    
+                    if (minDistance <= maxDistance) {
+                        routePoliceStations.push({
+                            name: station.name,
+                            lat: station.lat,
+                            lng: station.lng,
+                            distance: minDistance.toFixed(2) + ' km'
+                        });
+                    }
+                });
+                
+                // Sort by distance
+                routePoliceStations.sort((a, b) => parseFloat(a.distance) - parseFloat(b.distance));
+                
+                // Show markers for police stations along route
+                routePoliceStations.forEach(station => {
+                    var icon = createPoliceIcon(true);
+                    var marker = L.marker([station.lat, station.lng], { icon: icon })
+                        .bindPopup('<b>' + station.name + '</b><br>Distance: ' + station.distance)
+                        .addTo(map);
+                    routePoliceMarkers.push(marker);
+                });
+                
+                // Store for analysis
+                currentRoute.policeStationsAlongRoute = routePoliceStations;
+            });
         }
 
         function calculateDistance(lat1, lng1, lat2, lng2) {
@@ -291,15 +418,7 @@ const MainScreen: React.FC = () => {
         }
 
         function calculateSafetyFactors(route) {
-            var nearbyStations = 0;
-            route.route.forEach(point => {
-                policeStations.forEach(station => {
-                    var distance = calculateDistance(point[0], point[1], station.lat, station.lng);
-                    if (distance <= 1.0) {
-                        nearbyStations++;
-                    }
-                });
-            });
+            var nearbyStations = route.policeStationsAlongRoute ? route.policeStationsAlongRoute.length : 0;
 
             var distance = parseFloat(route.distance);
             var baseCCTV = Math.floor(3 + (distance * 1.5));
@@ -327,7 +446,8 @@ const MainScreen: React.FC = () => {
                 routeLength: route.distance + ' km',
                 estimatedTime: route.duration + ' min',
                 highRiskAreas: highRiskAreas,
-                safeZones: safeZones
+                safeZones: safeZones,
+                policeStationsAlongRoute: route.policeStationsAlongRoute || []
             };
         }
 
@@ -337,6 +457,18 @@ const MainScreen: React.FC = () => {
             
             var scoreColor = safetyFactors.safetyScore >= '8' ? '#28a745' : 
                            safetyFactors.safetyScore >= '6' ? '#ffc107' : '#dc3545';
+            
+            var policeStationsHTML = '';
+            if (safetyFactors.policeStationsAlongRoute.length > 0) {
+                policeStationsHTML = \`
+                    <div style="margin-top: 10px;">
+                        <strong>🚔 Police Stations Along Route:</strong>
+                        \${safetyFactors.policeStationsAlongRoute.map(station => 
+                            '<div class="police-station-item">• ' + station.name + ' (' + station.distance + ')</div>'
+                        ).join('')}
+                    </div>
+                \`;
+            }
             
             contentDiv.innerHTML = \`
                 <h3 style="text-align: center; margin-bottom: 15px;">Route Safety Analysis</h3>
@@ -364,6 +496,7 @@ const MainScreen: React.FC = () => {
                 <div class="safety-item">
                     <strong>👥 Crowd Presence:</strong> \${safetyFactors.crowdedAreas} crowded
                 </div>
+                \${policeStationsHTML}
                 \${safetyFactors.highRiskAreas.length > 0 ? \`
                     <div style="margin-top: 15px;">
                         <strong>⚠️ Areas Needing Attention:</strong>
@@ -415,6 +548,8 @@ const MainScreen: React.FC = () => {
 </html>
 `;
 
+  // ... (rest of the React component remains the same, just update the interface and modal to show police stations along route)
+
   const handleMessage = (event: any) => {
     const data = JSON.parse(event.nativeEvent.data);
     
@@ -435,7 +570,6 @@ const MainScreen: React.FC = () => {
 
     setIsLoading(true);
     
-    // Send message to WebView to find route
     webViewRef.current?.injectJavaScript(`
       window.postMessage({
         type: 'FIND_ROUTE',
@@ -591,6 +725,20 @@ const MainScreen: React.FC = () => {
                     <Text style={styles.metricValue}>{currentSafetyData.safetyFactors.crowdedAreas} crowded</Text>
                   </View>
                 </View>
+
+                {/* Police Stations Along Route */}
+                {currentSafetyData.safetyFactors.policeStationsAlongRoute && 
+                 currentSafetyData.safetyFactors.policeStationsAlongRoute.length > 0 && (
+                  <View style={styles.policeSection}>
+                    <Text style={styles.sectionTitle}>🚔 Police Stations Along Route</Text>
+                    {currentSafetyData.safetyFactors.policeStationsAlongRoute.map((station: any, index: number) => (
+                      <View key={index} style={styles.policeStationItem}>
+                        <Text style={styles.policeStationName}>• {station.name}</Text>
+                        <Text style={styles.policeStationDistance}>{station.distance} away</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
 
                 {currentSafetyData.safetyFactors.highRiskAreas.length > 0 && (
                   <View style={styles.riskSection}>
@@ -784,6 +932,27 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     color: '#007AFF',
+  },
+  policeSection: {
+    marginBottom: 15,
+    backgroundColor: '#e8f5e8',
+    padding: 15,
+    borderRadius: 10,
+  },
+  policeStationItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  policeStationName: {
+    fontSize: 14,
+    fontWeight: '500',
+    flex: 1,
+  },
+  policeStationDistance: {
+    fontSize: 12,
+    color: '#666',
   },
   riskSection: {
     marginBottom: 15,
