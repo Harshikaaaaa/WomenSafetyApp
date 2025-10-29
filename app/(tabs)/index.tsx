@@ -1,8 +1,9 @@
-import { router } from 'expo-router';
 import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Modal,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -10,20 +11,6 @@ import {
   View,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
-
-interface PoliceStation {
-  name: string;
-  lat: number;
-  lng: number;
-  type: string;
-}
-
-interface Location {
-  name: string;
-  lat: number;
-  lng: number;
-  address: string;
-}
 
 interface SafetyFactors {
   policeStations: number;
@@ -37,157 +24,14 @@ interface SafetyFactors {
   safeZones: string[];
 }
 
-interface RouteData {
-  start: Location;
-  end: Location;
-  route: [number, number][];
-  safetyFactors: SafetyFactors;
-}
-
 const MainScreen: React.FC = () => {
   const [startLocation, setStartLocation] = useState<string>('');
   const [endLocation, setEndLocation] = useState<string>('');
-  const [showPoliceStations, setShowPoliceStations] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [showPoliceStations, setShowPoliceStations] = useState<boolean>(false);
+  const [showRouteAnalysis, setShowRouteAnalysis] = useState<boolean>(false);
+  const [currentSafetyData, setCurrentSafetyData] = useState<any>(null);
   const webViewRef = useRef<WebView>(null);
-
-  // Real Bangalore police stations with accurate coordinates
-  const policeStations: PoliceStation[] = [
-    // Central Bangalore
-    { name: "Cubbon Park PS", lat: 12.9768, lng: 77.5953, type: "Police Station" },
-    { name: "Commercial Street PS", lat: 12.9815, lng: 77.6082, type: "Police Station" },
-    { name: "Ashok Nagar PS", lat: 12.9784, lng: 77.5778, type: "Police Station" },
-    { name: "Ulsoor PS", lat: 12.9789, lng: 77.6214, type: "Police Station" },
-    { name: "High Grounds PS", lat: 12.9846, lng: 77.5883, type: "Police Station" },
-    
-    // South Bangalore
-    { name: "HSR Layout PS", lat: 12.9116, lng: 77.6473, type: "Police Station" },
-    { name: "Koramangala PS", lat: 12.9348, lng: 77.6264, type: "Police Station" },
-    { name: "Jayanagar PS", lat: 12.9302, lng: 77.5834, type: "Police Station" },
-    { name: "JP Nagar PS", lat: 12.9123, lng: 77.5862, type: "Police Station" },
-    { name: "BTM Layout PS", lat: 12.9165, lng: 77.6101, type: "Police Station" },
-    { name: "Banashankari PS", lat: 12.9254, lng: 77.5468, type: "Police Station" },
-    { name: "Basavanagudi PS", lat: 12.9414, lng: 77.5670, type: "Police Station" },
-    
-    // North Bangalore
-    { name: "Yeshwanthpur PS", lat: 13.0256, lng: 77.5485, type: "Police Station" },
-    { name: "Malleshwaram PS", lat: 13.0067, lng: 77.5751, type: "Police Station" },
-    { name: "Rajajinagar PS", lat: 12.9916, lng: 77.5512, type: "Police Station" },
-    { name: "Peenya PS", lat: 13.0249, lng: 77.5175, type: "Police Station" },
-    { name: "Vijayanagar PS", lat: 12.9694, lng: 77.5303, type: "Police Station" },
-    
-    // East Bangalore
-    { name: "Indiranagar PS", lat: 12.9782, lng: 77.6408, type: "Police Station" },
-    { name: "Whitefield PS", lat: 12.9698, lng: 77.7499, type: "Police Station" },
-    { name: "KR Puram PS", lat: 13.0047, lng: 77.6954, type: "Police Station" },
-    { name: "Mahadevapura PS", lat: 12.9912, lng: 77.6993, type: "Police Station" },
-    { name: "CV Raman Nagar PS", lat: 12.9876, lng: 77.6634, type: "Police Station" },
-  ];
-
-  // Predefined locations with exact coordinates
-  const predefinedLocations: { [key: string]: Location } = {
-    // Central
-    'mg road': { name: 'MG Road', lat: 12.9757, lng: 77.6057, address: 'MG Road, Bangalore' },
-    'brigade road': { name: 'Brigade Road', lat: 12.9716, lng: 77.6050, address: 'Brigade Road, Bangalore' },
-    'commercial street': { name: 'Commercial Street', lat: 12.9815, lng: 77.6082, address: 'Commercial Street, Bangalore' },
-    'cubbon park': { name: 'Cubbon Park', lat: 12.9768, lng: 77.5953, address: 'Cubbon Park, Bangalore' },
-    'vidhana soudha': { name: 'Vidhana Soudha', lat: 12.9794, lng: 77.5907, address: 'Vidhana Soudha, Bangalore' },
-    
-    // South
-    'indiranagar': { name: 'Indiranagar', lat: 12.9782, lng: 77.6408, address: 'Indiranagar, Bangalore' },
-    'koramangala': { name: 'Koramangala', lat: 12.9348, lng: 77.6264, address: 'Koramangala, Bangalore' },
-    'jayanagar': { name: 'Jayanagar', lat: 12.9302, lng: 77.5834, address: 'Jayanagar, Bangalore' },
-    'jp nagar': { name: 'JP Nagar', lat: 12.9123, lng: 77.5862, address: 'JP Nagar, Bangalore' },
-    'btm layout': { name: 'BTM Layout', lat: 12.9165, lng: 77.6101, address: 'BTM Layout, Bangalore' },
-    'hsr layout': { name: 'HSR Layout', lat: 12.9116, lng: 77.6473, address: 'HSR Layout, Bangalore' },
-    'basavanagudi': { name: 'Basavanagudi', lat: 12.9414, lng: 77.5670, address: 'Basavanagudi, Bangalore' },
-    'banashankari': { name: 'Banashankari', lat: 12.9254, lng: 77.5468, address: 'Banashankari, Bangalore' },
-    'lalbagh': { name: 'Lalbagh', lat: 12.9507, lng: 77.5848, address: 'Lalbagh Botanical Garden, Bangalore' },
-    
-    // North
-    'malleshwaram': { name: 'Malleshwaram', lat: 13.0067, lng: 77.5751, address: 'Malleshwaram, Bangalore' },
-    'rajajinagar': { name: 'Rajajinagar', lat: 12.9916, lng: 77.5512, address: 'Rajajinagar, Bangalore' },
-    'yeshwanthpur': { name: 'Yeshwanthpur', lat: 13.0256, lng: 77.5485, address: 'Yeshwanthpur, Bangalore' },
-    'hebbal': { name: 'Hebbal', lat: 13.0395, lng: 77.5972, address: 'Hebbal, Bangalore' },
-    
-    // East
-    'whitefield': { name: 'Whitefield', lat: 12.9698, lng: 77.7499, address: 'Whitefield, Bangalore' },
-    'marathahalli': { name: 'Marathahalli', lat: 12.9592, lng: 77.6974, address: 'Marathahalli, Bangalore' },
-    'kr puram': { name: 'KR Puram', lat: 13.0047, lng: 77.6954, address: 'KR Puram, Bangalore' },
-    'electronic city': { name: 'Electronic City', lat: 12.8456, lng: 77.6653, address: 'Electronic City, Bangalore' },
-    
-    // West
-    'vijayanagar': { name: 'Vijayanagar', lat: 12.9694, lng: 77.5303, address: 'Vijayanagar, Bangalore' },
-    'kengeri': { name: 'Kengeri', lat: 12.9065, lng: 77.4857, address: 'Kengeri, Bangalore' },
-  };
-
-  // Proper road routes with actual Bangalore road coordinates
-  const predefinedRoutes: { [key: string]: [number, number][] } = {
-    // MG Road to Koramangala - Following actual main roads
-    'mg road_koramangala': [
-      [12.9757, 77.6057], // MG Road Start
-      [12.9748, 77.6065], // Church Street
-      [12.9738, 77.6078], // Trinity Circle
-      [12.9725, 77.6095], // Richmond Circle
-      [12.9712, 77.6112], // Richmond Road
-      [12.9698, 77.6130], // Richmond Town
-      [12.9682, 77.6150], // Langford Town
-      [12.9665, 77.6172], // Shanti Nagar
-      [12.9648, 77.6195], // Wilson Garden
-      [12.9632, 77.6215], // Dairy Circle
-      [12.9615, 77.6235], // Adugodi
-      [12.9598, 77.6250], // Koramangala 1st Block
-      [12.9580, 77.6258], // Koramangala 2nd Block
-      [12.9562, 77.6262], // Koramangala 3rd Block
-      [12.9543, 77.6263], // Koramangala 4th Block
-      [12.9525, 77.6264], // Koramangala 5th Block
-      [12.9507, 77.6264], // Koramangala 6th Block
-      [12.9488, 77.6264], // Koramangala 7th Block
-      [12.9470, 77.6264], // Koramangala 8th Block
-      [12.9452, 77.6264], // Koramangala Intermediate
-      [12.9433, 77.6264], // Koramangala Intermediate
-      [12.9415, 77.6264], // Koramangala Intermediate
-      [12.9397, 77.6264], // Koramangala Intermediate
-      [12.9378, 77.6264], // Koramangala Intermediate
-      [12.9360, 77.6264], // Koramangala Intermediate
-      [12.9348, 77.6264]  // Koramangala Police Station
-    ],
-
-    // MG Road to Indiranagar
-    'mg road_indiranagar': [
-      [12.9757, 77.6057], // MG Road
-      [12.9762, 77.6070], // Trinity Circle
-      [12.9768, 77.6090], // Ulsoor Road
-      [12.9772, 77.6120], // Near Ulsoor Lake
-      [12.9775, 77.6150], // Murphy Town
-      [12.9778, 77.6180], // Indiranagar 1st Stage
-      [12.9780, 77.6220], // Indiranagar 2nd Stage
-      [12.9781, 77.6260], // Indiranagar 3rd Stage
-      [12.9782, 77.6300], // Indiranagar 4th Stage
-      [12.9782, 77.6340], // Indiranagar 5th Stage
-      [12.9782, 77.6380], // Indiranagar 6th Stage
-      [12.9782, 77.6408]  // Indiranagar PS
-    ],
-
-    // Koramangala to HSR Layout
-    'koramangala_hsr layout': [
-      [12.9348, 77.6264], // Koramangala PS
-      [12.9335, 77.6270], // ST Bed Junction
-      [12.9318, 77.6280], // Silk Board Junction
-      [12.9300, 77.6295], // Bommanahalli
-      [12.9282, 77.6310], // HSR Layout Entry
-      [12.9265, 77.6325], // HSR Sector 1
-      [12.9248, 77.6340], // HSR Sector 2
-      [12.9230, 77.6355], // HSR Sector 3
-      [12.9213, 77.6370], // HSR Sector 4
-      [12.9195, 77.6385], // HSR Sector 5
-      [12.9178, 77.6400], // HSR Sector 6
-      [12.9160, 77.6415], // HSR Sector 7
-      [12.9143, 77.6430], // HSR Layout
-      [12.9125, 77.6445], // HSR Layout
-      [12.9116, 77.6473]  // HSR Layout PS
-    ]
-  };
 
   const htmlContent = `
 <!DOCTYPE html>
@@ -200,10 +44,67 @@ const MainScreen: React.FC = () => {
         body { margin: 0; padding: 0; }
         #map { height: 100vh; width: 100vw; }
         .police-icon { background: #dc3545; border-radius: 50%; }
+        .route-analysis-panel {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            right: 20px;
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            z-index: 1000;
+            display: none;
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+        .close-button {
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .safety-score {
+            font-size: 24px;
+            font-weight: bold;
+            text-align: center;
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 10px;
+        }
+        .safety-item {
+            margin: 8px 0;
+            padding: 8px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        .risk-item {
+            color: #dc3545;
+            margin: 4px 0;
+        }
+        .safe-item {
+            color: #28a745;
+            margin: 4px 0;
+        }
     </style>
 </head>
 <body>
     <div id="map"></div>
+    <div id="routeAnalysis" class="route-analysis-panel">
+        <button class="close-button" onclick="closeAnalysis()">×</button>
+        <div id="analysisContent"></div>
+    </div>
+
     <script>
         var map = L.map('map').setView([12.9716, 77.5946], 12);
         
@@ -215,6 +116,23 @@ const MainScreen: React.FC = () => {
         var routePolyline = null;
         var startMarker = null;
         var endMarker = null;
+        var currentRoute = null;
+
+        // Bangalore police stations
+        var policeStations = [
+            {name: "Cubbon Park PS", lat: 12.9768, lng: 77.5953},
+            {name: "Commercial Street PS", lat: 12.9815, lng: 77.6082},
+            {name: "Ashok Nagar PS", lat: 12.9784, lng: 77.5778},
+            {name: "Ulsoor PS", lat: 12.9789, lng: 77.6214},
+            {name: "HSR Layout PS", lat: 12.9116, lng: 77.6473},
+            {name: "Koramangala PS", lat: 12.9348, lng: 77.6264},
+            {name: "Jayanagar PS", lat: 12.9302, lng: 77.5834},
+            {name: "Indiranagar PS", lat: 12.9782, lng: 77.6408},
+            {name: "Whitefield PS", lat: 12.9698, lng: 77.7499},
+            {name: "Yeshwanthpur PS", lat: 13.0256, lng: 77.5485},
+            {name: "Malleshwaram PS", lat: 13.0067, lng: 77.5751},
+            {name: "Rajajinagar PS", lat: 12.9916, lng: 77.5512}
+        ];
 
         function createPoliceIcon() {
             return L.divIcon({
@@ -225,11 +143,11 @@ const MainScreen: React.FC = () => {
             });
         }
 
-        function showPoliceStations(stations) {
+        function showPoliceStations() {
             policeMarkers.forEach(marker => map.removeLayer(marker));
             policeMarkers = [];
             
-            stations.forEach(station => {
+            policeStations.forEach(station => {
                 var icon = createPoliceIcon();
                 var marker = L.marker([station.lat, station.lng], { icon: icon })
                     .bindPopup('<b>' + station.name + '</b>')
@@ -238,243 +156,323 @@ const MainScreen: React.FC = () => {
             });
         }
 
-        function drawRoute(routeData) {
+        function hidePoliceStations() {
+            policeMarkers.forEach(marker => map.removeLayer(marker));
+            policeMarkers = [];
+        }
+
+        function togglePoliceStations() {
+            if (policeMarkers.length > 0) {
+                hidePoliceStations();
+                return false;
+            } else {
+                showPoliceStations();
+                return true;
+            }
+        }
+
+        // Geocode location using Nominatim
+        function geocodeLocation(query, callback) {
+            var url = 'https://nominatim.openstreetmap.org/search?format=json&q=' + 
+                     encodeURIComponent(query + ', Bangalore') + '&limit=1';
+            
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    if (data && data.length > 0) {
+                        var result = data[0];
+                        callback({
+                            lat: parseFloat(result.lat),
+                            lng: parseFloat(result.lon),
+                            name: result.display_name
+                        });
+                    } else {
+                        callback(null);
+                    }
+                })
+                .catch(error => {
+                    console.error('Geocoding error:', error);
+                    callback(null);
+                });
+        }
+
+        function drawRoute(start, end) {
             if (routePolyline) map.removeLayer(routePolyline);
             if (startMarker) map.removeLayer(startMarker);
             if (endMarker) map.removeLayer(endMarker);
             
-            startMarker = L.marker([routeData.start.lat, routeData.start.lng])
-                .bindPopup('<b>Start: ' + routeData.start.name + '</b>')
+            startMarker = L.marker([start.lat, start.lng])
+                .bindPopup('<b>Start: ' + start.name + '</b>')
                 .addTo(map);
             
-            endMarker = L.marker([routeData.end.lat, routeData.end.lng])
-                .bindPopup('<b>End: ' + routeData.end.name + '</b>')
+            endMarker = L.marker([end.lat, end.lng])
+                .bindPopup('<b>End: ' + end.name + '</b>')
                 .addTo(map);
             
-            var latlngs = routeData.route;
-            routePolyline = L.polyline(latlngs, {color: '#007AFF', weight: 6, opacity: 0.8}).addTo(map);
-            
-            // Fit bounds to show entire route with padding
-            var group = new L.featureGroup([routePolyline, startMarker, endMarker]);
-            map.fitBounds(group.getBounds().pad(0.1));
+            getOSRMRoute(start, end);
         }
 
+        function getOSRMRoute(start, end) {
+            var url = 'https://router.project-osrm.org/route/v1/driving/' + 
+                     start.lng + ',' + start.lat + ';' + 
+                     end.lng + ',' + end.lat + 
+                     '?overview=full&geometries=geojson';
+            
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.routes && data.routes.length > 0) {
+                        var coordinates = data.routes[0].geometry.coordinates;
+                        var routePoints = coordinates.map(coord => [coord[1], coord[0]]);
+                        
+                        routePolyline = L.polyline(routePoints, {
+                            color: '#007AFF', 
+                            weight: 6, 
+                            opacity: 0.8
+                        }).addTo(map);
+                        
+                        map.fitBounds(routePolyline.getBounds());
+                        
+                        currentRoute = {
+                            start: start,
+                            end: end,
+                            route: routePoints,
+                            distance: (data.routes[0].distance / 1000).toFixed(2),
+                            duration: Math.floor(data.routes[0].duration / 60)
+                        };
+                    }
+                })
+                .catch(error => {
+                    console.error('Routing error:', error);
+                    // Fallback straight line
+                    var routePoints = [[start.lat, start.lng], [end.lat, end.lng]];
+                    routePolyline = L.polyline(routePoints, {
+                        color: '#007AFF', 
+                        weight: 6, 
+                        opacity: 0.8
+                    }).addTo(map);
+                    
+                    currentRoute = {
+                        start: start,
+                        end: end,
+                        route: routePoints,
+                        distance: calculateDistance(start.lat, start.lng, end.lat, end.lng).toFixed(2),
+                        duration: Math.floor((calculateDistance(start.lat, start.lng, end.lat, end.lng) / 25) * 60)
+                    };
+                });
+        }
+
+        function calculateDistance(lat1, lng1, lat2, lng2) {
+            var R = 6371;
+            var dLat = (lat2 - lat1) * Math.PI / 180;
+            var dLng = (lng2 - lng1) * Math.PI / 180;
+            var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                    Math.sin(dLng/2) * Math.sin(dLng/2);
+            var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c;
+        }
+
+        function analyzeRouteSafety() {
+            if (!currentRoute) {
+                alert('Please create a route first by entering start and end locations.');
+                return;
+            }
+            
+            var safetyFactors = calculateSafetyFactors(currentRoute);
+            showSafetyAnalysis(safetyFactors);
+            
+            // Send to React Native
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'ROUTE_ANALYSIS',
+                routeData: currentRoute,
+                safetyFactors: safetyFactors
+            }));
+        }
+
+        function calculateSafetyFactors(route) {
+            var nearbyStations = 0;
+            route.route.forEach(point => {
+                policeStations.forEach(station => {
+                    var distance = calculateDistance(point[0], point[1], station.lat, station.lng);
+                    if (distance <= 1.0) {
+                        nearbyStations++;
+                    }
+                });
+            });
+
+            var distance = parseFloat(route.distance);
+            var baseCCTV = Math.floor(3 + (distance * 1.5));
+            var baseLighting = Math.min(90, 55 + (nearbyStations * 6));
+            var baseCrowd = Math.min(85, 45 + (nearbyStations * 7));
+            var safetyScore = Math.min(10, 5 + (nearbyStations * 0.8) + (Math.random() * 1)).toFixed(1);
+
+            var highRiskAreas = [];
+            var safeZones = [];
+
+            if (distance > 8) highRiskAreas.push('Long route - consider breaks');
+            if (nearbyStations < 2) highRiskAreas.push('Limited police presence');
+            if (baseLighting < 60) highRiskAreas.push('Some poorly lit areas');
+            
+            if (nearbyStations >= 2) safeZones.push('Adequate police coverage');
+            if (baseLighting >= 70) safeZones.push('Well-lit route');
+            if (baseCrowd >= 60) safeZones.push('Generally populated areas');
+
+            return {
+                policeStations: nearbyStations,
+                cctvCameras: baseCCTV,
+                wellLitAreas: baseLighting + '%',
+                crowdedAreas: baseCrowd + '%',
+                safetyScore: safetyScore + '/10',
+                routeLength: route.distance + ' km',
+                estimatedTime: route.duration + ' min',
+                highRiskAreas: highRiskAreas,
+                safeZones: safeZones
+            };
+        }
+
+        function showSafetyAnalysis(safetyFactors) {
+            var analysisDiv = document.getElementById('routeAnalysis');
+            var contentDiv = document.getElementById('analysisContent');
+            
+            var scoreColor = safetyFactors.safetyScore >= '8' ? '#28a745' : 
+                           safetyFactors.safetyScore >= '6' ? '#ffc107' : '#dc3545';
+            
+            contentDiv.innerHTML = \`
+                <h3 style="text-align: center; margin-bottom: 15px;">Route Safety Analysis</h3>
+                <div class="safety-score" style="background-color: \${scoreColor}; color: white;">
+                    Safety Score: \${safetyFactors.safetyScore}
+                </div>
+                <div class="safety-item">
+                    <strong>Route:</strong> \${currentRoute.start.name.split(',')[0]} → \${currentRoute.end.name.split(',')[0]}
+                </div>
+                <div class="safety-item">
+                    <strong>Distance:</strong> \${safetyFactors.routeLength}
+                </div>
+                <div class="safety-item">
+                    <strong>Time:</strong> \${safetyFactors.estimatedTime}
+                </div>
+                <div class="safety-item">
+                    <strong>🚔 Police Stations:</strong> \${safetyFactors.policeStations} nearby
+                </div>
+                <div class="safety-item">
+                    <strong>📹 CCTV Cameras:</strong> \${safetyFactors.cctvCameras} along route
+                </div>
+                <div class="safety-item">
+                    <strong>💡 Street Lighting:</strong> \${safetyFactors.wellLitAreas} well-lit
+                </div>
+                <div class="safety-item">
+                    <strong>👥 Crowd Presence:</strong> \${safetyFactors.crowdedAreas} crowded
+                </div>
+                \${safetyFactors.highRiskAreas.length > 0 ? \`
+                    <div style="margin-top: 15px;">
+                        <strong>⚠️ Areas Needing Attention:</strong>
+                        \${safetyFactors.highRiskAreas.map(risk => '<div class="risk-item">• ' + risk + '</div>').join('')}
+                    </div>
+                \` : ''}
+                \${safetyFactors.safeZones.length > 0 ? \`
+                    <div style="margin-top: 10px;">
+                        <strong>✅ Safe Zones:</strong>
+                        \${safetyFactors.safeZones.map(zone => '<div class="safe-item">• ' + zone + '</div>').join('')}
+                    </div>
+                \` : ''}
+            \`;
+            
+            analysisDiv.style.display = 'block';
+        }
+
+        function closeAnalysis() {
+            document.getElementById('routeAnalysis').style.display = 'none';
+        }
+
+        // Listen for messages from React Native
         window.addEventListener('message', function(event) {
             var data = event.data;
-            if (data.type === 'SHOW_POLICE_STATIONS') {
-                showPoliceStations(data.stations);
-            } else if (data.type === 'DRAW_ROUTE') {
-                drawRoute(data.routeData);
+            if (data.type === 'FIND_ROUTE') {
+                geocodeLocation(data.start, function(startLocation) {
+                    if (!startLocation) {
+                        alert('Start location not found. Please try a different name.');
+                        return;
+                    }
+                    geocodeLocation(data.end, function(endLocation) {
+                        if (!endLocation) {
+                            alert('End location not found. Please try a different name.');
+                            return;
+                        }
+                        drawRoute(startLocation, endLocation);
+                    });
+                });
+            } else if (data.type === 'TOGGLE_POLICE') {
+                var isVisible = togglePoliceStations();
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'POLICE_TOGGLED',
+                    visible: isVisible
+                }));
             }
         });
-
-        // Remove click handler to prevent garbled text
     </script>
 </body>
 </html>
 `;
 
-  // Simple location matching
-  const findLocation = (locationName: string): Location | null => {
-    const normalizedName = locationName.toLowerCase().trim();
+  const handleMessage = (event: any) => {
+    const data = JSON.parse(event.nativeEvent.data);
     
-    // Exact match
-    if (predefinedLocations[normalizedName]) {
-      return predefinedLocations[normalizedName];
+    if (data.type === 'ROUTE_ANALYSIS') {
+      setIsLoading(false);
+      setCurrentSafetyData(data);
+      setShowRouteAnalysis(true);
+    } else if (data.type === 'POLICE_TOGGLED') {
+      setShowPoliceStations(data.visible);
     }
-    
-    // Partial match
-    for (const [key, location] of Object.entries(predefinedLocations)) {
-      if (normalizedName.includes(key) || key.includes(normalizedName)) {
-        return location;
-      }
-    }
-    
-    return null;
   };
 
-  // Get predefined route or generate realistic one
-  const getRoute = (start: Location, end: Location): [number, number][] => {
-    const routeKey1 = `${start.name.toLowerCase().replace(' ', '_')}_${end.name.toLowerCase().replace(' ', '_')}`;
-    const routeKey2 = `${end.name.toLowerCase().replace(' ', '_')}_${start.name.toLowerCase().replace(' ', '_')}`;
-    
-    // Return predefined route if available
-    if (predefinedRoutes[routeKey1]) {
-      return predefinedRoutes[routeKey1];
-    }
-    if (predefinedRoutes[routeKey2]) {
-      return predefinedRoutes[routeKey2];
-    }
-    
-    // For other locations, use a simple direct route
-    return [
-      [start.lat, start.lng],
-      [end.lat, end.lng]
-    ];
-  };
-
-  // Calculate safety factors
-  const calculateRealSafetyFactors = (route: [number, number][], policeStations: PoliceStation[]): SafetyFactors => {
-    // Calculate route length
-    let totalDistance = 0;
-    for (let i = 1; i < route.length; i++) {
-      const [lat1, lng1] = route[i-1];
-      const [lat2, lng2] = route[i];
-      const R = 6371;
-      const dLat = (lat2 - lat1) * Math.PI / 180;
-      const dLng = (lng2 - lng1) * Math.PI / 180;
-      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-                Math.sin(dLng/2) * Math.sin(dLng/2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-      totalDistance += R * c;
-    }
-    const routeLengthKm = totalDistance.toFixed(1);
-
-    // Count police stations near the route
-    const nearbyStationIds = new Set<string>();
-    
-    route.forEach(point => {
-      policeStations.forEach(station => {
-        const distance = calculateDistance(
-          point[0], point[1],
-          station.lat, station.lng
-        );
-        if (distance <= 1.0) {
-          nearbyStationIds.add(station.name);
-        }
-      });
-    });
-
-    const nearbyStations = nearbyStationIds.size;
-
-    // Safety calculations
-    const baseCCTV = Math.floor(3 + (totalDistance * 1.5));
-    const baseLighting = Math.min(90, 55 + (nearbyStations * 6));
-    const baseCrowd = Math.min(85, 45 + (nearbyStations * 7));
-    const safetyScore = Math.min(10, 5 + (nearbyStations * 0.8) + (Math.random() * 1)).toFixed(1);
-    const estimatedMinutes = Math.floor((totalDistance / 20) * 60);
-
-    const highRiskAreas: string[] = [];
-    const safeZones: string[] = [];
-
-    if (totalDistance > 8) highRiskAreas.push('Long route - consider breaks');
-    if (nearbyStations < 2) highRiskAreas.push('Limited police presence');
-    if (baseLighting < 60) highRiskAreas.push('Some poorly lit areas');
-    
-    if (nearbyStations >= 2) safeZones.push('Adequate police coverage');
-    if (baseLighting >= 70) safeZones.push('Well-lit route');
-    if (baseCrowd >= 60) safeZones.push('Generally populated areas');
-
-    return {
-      policeStations: nearbyStations,
-      cctvCameras: baseCCTV,
-      wellLitAreas: `${baseLighting}%`,
-      crowdedAreas: `${baseCrowd}%`,
-      safetyScore: safetyScore,
-      routeLength: `${routeLengthKm} km`,
-      estimatedTime: `${estimatedMinutes} min`,
-      highRiskAreas,
-      safeZones
-    };
-  };
-
-  const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
-    const R = 6371;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLng = (lng2 - lng1) * Math.PI / 180;
-    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-              Math.sin(dLng/2) * Math.sin(dLng/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return R * c;
-  };
-
-  const handleFindSafeRoute = async () => {
-    if (!startLocation || !endLocation) {
+  const handleFindRoute = () => {
+    if (!startLocation.trim() || !endLocation.trim()) {
       Alert.alert('Error', 'Please enter both start and end locations');
       return;
     }
 
     setIsLoading(true);
-
-    try {
-      const startLocationData = findLocation(startLocation);
-      const endLocationData = findLocation(endLocation);
-
-      if (!startLocationData || !endLocationData) {
-        Alert.alert(
-          'Location Not Found', 
-          'Please use: MG Road, Koramangala, Indiranagar, HSR Layout, etc.',
-          [{ text: 'OK' }]
-        );
-        return;
-      }
-
-      const route = getRoute(startLocationData, endLocationData);
-      const safetyFactors = calculateRealSafetyFactors(route, policeStations);
-
-      const routeData: RouteData = {
-        start: startLocationData,
-        end: endLocationData,
-        route: route,
-        safetyFactors: safetyFactors
-      };
-
-      webViewRef.current?.injectJavaScript(`
-        drawRoute(${JSON.stringify(routeData)});
-        true;
-      `);
-
-      router.push({
-        pathname: '/route-analysis',
-        params: {
-          routeData: JSON.stringify(routeData),
-          safetyFactors: JSON.stringify(routeData.safetyFactors)
-        }
+    
+    // Send message to WebView to find route
+    webViewRef.current?.injectJavaScript(`
+      window.postMessage({
+        type: 'FIND_ROUTE',
+        start: '${startLocation}',
+        end: '${endLocation}'
       });
-
-    } catch (error) {
-      Alert.alert('Error', 'Failed to calculate route. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
+      true;
+    `);
   };
 
   const togglePoliceStations = () => {
-    const newState = !showPoliceStations;
-    setShowPoliceStations(newState);
-    
-    if (newState) {
-      webViewRef.current?.injectJavaScript(`
-        showPoliceStations(${JSON.stringify(policeStations)});
-        true;
-      `);
-    } else {
-      webViewRef.current?.injectJavaScript(`
-        policeMarkers.forEach(marker => map.removeLayer(marker));
-        policeMarkers = [];
-        true;
-      `);
-    }
+    webViewRef.current?.injectJavaScript(`
+      window.postMessage({
+        type: 'TOGGLE_POLICE'
+      });
+      true;
+    `);
+  };
+
+  const analyzeRouteSafety = () => {
+    webViewRef.current?.injectJavaScript(`
+      analyzeRouteSafety();
+      true;
+    `);
   };
 
   const showLocationSuggestions = () => {
-    const suggestions = [
-      'MG Road', 'Koramangala', 'Indiranagar', 
-      'HSR Layout', 'Jayanagar', 'Whitefield',
-      'BTM Layout', 'Electronic City', 'Marathahalli'
-    ].join('\n• ');
-    
     Alert.alert(
-      'Try These Locations:',
-      '• ' + suggestions,
+      'Location Suggestions',
+      'Try these Bangalore locations:\n\n• MG Road\n• Koramangala\n• Indiranagar\n• HSR Layout\n• Whitefield\n• Jayanagar\n• Electronic City\n• Marathahalli\n• Yeshwanthpur',
       [{ text: 'OK' }]
     );
   };
 
   return (
     <View style={styles.container}>
+      {/* Search Controls */}
       <View style={styles.controls}>
         <TextInput
           style={styles.input}
@@ -490,19 +488,19 @@ const MainScreen: React.FC = () => {
         />
         
         <TouchableOpacity onPress={showLocationSuggestions} style={styles.suggestionButton}>
-          <Text style={styles.suggestionText}>📍 Tap for location suggestions</Text>
+          <Text style={styles.suggestionText}>📍 Need location ideas?</Text>
         </TouchableOpacity>
         
         <View style={styles.buttonRow}>
           <TouchableOpacity 
             style={[styles.button, styles.primaryButton]}
-            onPress={handleFindSafeRoute}
+            onPress={handleFindRoute}
             disabled={isLoading}
           >
             {isLoading ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <Text style={styles.buttonText}>Find Safest Route</Text>
+              <Text style={styles.buttonText}>Find Route</Text>
             )}
           </TouchableOpacity>
           
@@ -511,12 +509,20 @@ const MainScreen: React.FC = () => {
             onPress={togglePoliceStations}
           >
             <Text style={styles.buttonText}>
-              {showPoliceStations ? 'Hide Police' : 'Show Police'}
+              {showPoliceStations ? '👮 Hide Police' : '👮 Show Police'}
             </Text>
           </TouchableOpacity>
         </View>
+
+        <TouchableOpacity 
+          style={[styles.button, styles.analysisButton]}
+          onPress={analyzeRouteSafety}
+        >
+          <Text style={styles.buttonText}>🛡️ Analyze Safety</Text>
+        </TouchableOpacity>
       </View>
 
+      {/* Map */}
       <View style={styles.mapContainer}>
         <WebView
           ref={webViewRef}
@@ -525,10 +531,98 @@ const MainScreen: React.FC = () => {
           javaScriptEnabled={true}
           domStorageEnabled={true}
           startInLoadingState={true}
+          onMessage={handleMessage}
         />
       </View>
+
+      {/* Route Analysis Modal */}
+      <Modal
+        visible={showRouteAnalysis}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowRouteAnalysis(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalContent}>
+            <TouchableOpacity 
+              style={styles.closeButton}
+              onPress={() => setShowRouteAnalysis(false)}
+            >
+              <Text style={styles.closeButtonText}>×</Text>
+            </TouchableOpacity>
+            
+            {currentSafetyData && (
+              <ScrollView style={styles.analysisContent}>
+                <Text style={styles.modalTitle}>Route Safety Analysis</Text>
+                
+                <View style={[styles.scoreContainer, 
+                  { backgroundColor: getScoreColor(currentSafetyData.safetyFactors.safetyScore) }]}>
+                  <Text style={styles.scoreText}>Safety Score</Text>
+                  <Text style={styles.scoreValue}>{currentSafetyData.safetyFactors.safetyScore}</Text>
+                </View>
+
+                <View style={styles.routeInfo}>
+                  <Text style={styles.infoText}>
+                    📍 From: {currentSafetyData.routeData.start.name.split(',')[0]}
+                  </Text>
+                  <Text style={styles.infoText}>
+                    🎯 To: {currentSafetyData.routeData.end.name.split(',')[0]}
+                  </Text>
+                  <Text style={styles.infoText}>📏 {currentSafetyData.safetyFactors.routeLength}</Text>
+                  <Text style={styles.infoText}>⏱ {currentSafetyData.safetyFactors.estimatedTime}</Text>
+                </View>
+
+                <View style={styles.safetyMetrics}>
+                  <Text style={styles.sectionTitle}>Safety Metrics</Text>
+                  <View style={styles.metricItem}>
+                    <Text style={styles.metricTitle}>🚔 Police Stations</Text>
+                    <Text style={styles.metricValue}>{currentSafetyData.safetyFactors.policeStations} nearby</Text>
+                  </View>
+                  <View style={styles.metricItem}>
+                    <Text style={styles.metricTitle}>📹 CCTV Cameras</Text>
+                    <Text style={styles.metricValue}>{currentSafetyData.safetyFactors.cctvCameras} along route</Text>
+                  </View>
+                  <View style={styles.metricItem}>
+                    <Text style={styles.metricTitle}>💡 Street Lighting</Text>
+                    <Text style={styles.metricValue}>{currentSafetyData.safetyFactors.wellLitAreas} well-lit</Text>
+                  </View>
+                  <View style={styles.metricItem}>
+                    <Text style={styles.metricTitle}>👥 Crowd Presence</Text>
+                    <Text style={styles.metricValue}>{currentSafetyData.safetyFactors.crowdedAreas} crowded</Text>
+                  </View>
+                </View>
+
+                {currentSafetyData.safetyFactors.highRiskAreas.length > 0 && (
+                  <View style={styles.riskSection}>
+                    <Text style={styles.sectionTitle}>⚠️ Areas Needing Attention</Text>
+                    {currentSafetyData.safetyFactors.highRiskAreas.map((risk: string, index: number) => (
+                      <Text key={index} style={styles.riskItem}>• {risk}</Text>
+                    ))}
+                  </View>
+                )}
+
+                {currentSafetyData.safetyFactors.safeZones.length > 0 && (
+                  <View style={styles.safeSection}>
+                    <Text style={styles.sectionTitle}>✅ Safe Zones</Text>
+                    {currentSafetyData.safetyFactors.safeZones.map((zone: string, index: number) => (
+                      <Text key={index} style={styles.safeItem}>• {zone}</Text>
+                    ))}
+                  </View>
+                )}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
+};
+
+const getScoreColor = (score: string) => {
+  const numericScore = parseFloat(score);
+  if (numericScore >= 8) return '#28A745';
+  if (numericScore >= 6) return '#FFC107';
+  return '#DC3545';
 };
 
 const styles = StyleSheet.create({
@@ -564,10 +658,9 @@ const styles = StyleSheet.create({
   buttonRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 5,
+    marginBottom: 10,
   },
   button: {
-    flex: 1,
     padding: 15,
     borderRadius: 8,
     alignItems: 'center',
@@ -575,12 +668,19 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     backgroundColor: '#007AFF',
+    flex: 1,
   },
   secondaryButton: {
     backgroundColor: '#6C757D',
+    flex: 1,
   },
   activeButton: {
     backgroundColor: '#28A745',
+    flex: 1,
+  },
+  analysisButton: {
+    backgroundColor: '#FFC107',
+    width: '100%',
   },
   buttonText: {
     color: 'white',
@@ -592,6 +692,114 @@ const styles = StyleSheet.create({
   },
   webview: {
     flex: 1,
+  },
+  modalContainer: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: '80%',
+  },
+  closeButton: {
+    position: 'absolute',
+    top: 15,
+    right: 20,
+    backgroundColor: '#DC3545',
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
+  },
+  closeButtonText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  analysisContent: {
+    marginTop: 10,
+  },
+  modalTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 15,
+  },
+  scoreContainer: {
+    padding: 20,
+    borderRadius: 15,
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  scoreText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  scoreValue: {
+    color: 'white',
+    fontSize: 32,
+    fontWeight: 'bold',
+    marginTop: 5,
+  },
+  routeInfo: {
+    backgroundColor: '#f8f9fa',
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 20,
+  },
+  infoText: {
+    fontSize: 14,
+    marginBottom: 5,
+    color: '#333',
+  },
+  safetyMetrics: {
+    marginBottom: 20,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    color: '#333',
+  },
+  metricItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  metricTitle: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  metricValue: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#007AFF',
+  },
+  riskSection: {
+    marginBottom: 15,
+  },
+  safeSection: {
+    marginBottom: 15,
+  },
+  riskItem: {
+    color: '#DC3545',
+    fontSize: 14,
+    marginBottom: 4,
+  },
+  safeItem: {
+    color: '#28A745',
+    fontSize: 14,
+    marginBottom: 4,
   },
 });
 
