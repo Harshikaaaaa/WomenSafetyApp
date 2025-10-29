@@ -2,6 +2,8 @@ import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Dimensions,
   Modal,
   ScrollView,
   StyleSheet,
@@ -11,6 +13,8 @@ import {
   View,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
+
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface SafetyFactors {
   policeStations: number;
@@ -29,10 +33,25 @@ const MainScreen: React.FC = () => {
   const [startLocation, setStartLocation] = useState<string>('');
   const [endLocation, setEndLocation] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isRouteLoading, setIsRouteLoading] = useState<boolean>(false);
   const [showPoliceStations, setShowPoliceStations] = useState<boolean>(false);
   const [showRouteAnalysis, setShowRouteAnalysis] = useState<boolean>(false);
   const [currentSafetyData, setCurrentSafetyData] = useState<any>(null);
+  const [isHeaderExpanded, setIsHeaderExpanded] = useState<boolean>(false);
+  
   const webViewRef = useRef<WebView>(null);
+  const headerHeight = useRef(new Animated.Value(140)).current; // Initial collapsed height
+
+  const toggleHeader = () => {
+    const toValue = isHeaderExpanded ? 140 : 280; // Collapsed: 140, Expanded: 280
+    setIsHeaderExpanded(!isHeaderExpanded);
+    
+    Animated.timing(headerHeight, {
+      toValue: toValue,
+      duration: 300,
+      useNativeDriver: false,
+    }).start();
+  };
 
   const htmlContent = `
 <!DOCTYPE html>
@@ -46,72 +65,28 @@ const MainScreen: React.FC = () => {
         #map { height: 100vh; width: 100vw; }
         .police-icon { background: #dc3545; border-radius: 50%; }
         .route-police-icon { background: #28a745; border-radius: 50%; }
-        .route-analysis-panel {
+        .loading-overlay {
             position: absolute;
-            bottom: 20px;
-            left: 20px;
-            right: 20px;
-            background: white;
-            padding: 20px;
-            border-radius: 15px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-            z-index: 1000;
-            display: none;
-            max-height: 70vh;
-            overflow-y: auto;
-        }
-        .close-button {
-            position: absolute;
-            top: 10px;
-            right: 15px;
-            background: #dc3545;
-            color: white;
-            border: none;
-            border-radius: 50%;
-            width: 30px;
-            height: 30px;
-            font-size: 16px;
-            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255,255,255,0.8);
             display: flex;
             align-items: center;
             justify-content: center;
-        }
-        .safety-score {
-            font-size: 24px;
-            font-weight: bold;
-            text-align: center;
-            margin: 10px 0;
-            padding: 10px;
-            border-radius: 10px;
-        }
-        .safety-item {
-            margin: 8px 0;
-            padding: 8px;
-            background: #f8f9fa;
-            border-radius: 8px;
-        }
-        .risk-item {
-            color: #dc3545;
-            margin: 4px 0;
-        }
-        .safe-item {
-            color: #28a745;
-            margin: 4px 0;
-        }
-        .police-station-item {
-            background: #e8f5e8;
-            margin: 4px 0;
-            padding: 6px;
-            border-radius: 6px;
-            font-size: 12px;
+            z-index: 2000;
+            display: none;
         }
     </style>
 </head>
 <body>
     <div id="map"></div>
-    <div id="routeAnalysis" class="route-analysis-panel">
-        <button class="close-button" onclick="closeAnalysis()">×</button>
-        <div id="analysisContent"></div>
+    <div id="loadingOverlay" class="loading-overlay">
+        <div style="background: white; padding: 20px; border-radius: 10px; text-align: center;">
+            <h3>Finding Route...</h3>
+            <p>Please wait while we calculate your route</p>
+        </div>
     </div>
 
     <script>
@@ -128,6 +103,14 @@ const MainScreen: React.FC = () => {
         var endMarker = null;
         var currentRoute = null;
         var allPoliceStations = [];
+
+        function showLoading() {
+            document.getElementById('loadingOverlay').style.display = 'flex';
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingOverlay').style.display = 'none';
+        }
 
         function createPoliceIcon(isRoutePolice = false) {
             var color = isRoutePolice ? '#28a745' : '#dc3545';
@@ -271,6 +254,8 @@ const MainScreen: React.FC = () => {
         }
 
         function drawRoute(start, end) {
+            showLoading();
+            
             if (routePolyline) map.removeLayer(routePolyline);
             if (startMarker) map.removeLayer(startMarker);
             if (endMarker) map.removeLayer(endMarker);
@@ -322,6 +307,11 @@ const MainScreen: React.FC = () => {
                         // Get police stations along the route
                         findPoliceStationsAlongRoute(currentRoute);
                     }
+                    hideLoading();
+                    // Notify React Native that route is ready
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'ROUTE_READY'
+                    }));
                 })
                 .catch(error => {
                     console.error('Routing error:', error);
@@ -343,6 +333,11 @@ const MainScreen: React.FC = () => {
                     };
 
                     findPoliceStationsAlongRoute(currentRoute);
+                    hideLoading();
+                    // Notify React Native that route is ready
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'ROUTE_READY'
+                    }));
                 });
         }
 
@@ -407,9 +402,8 @@ const MainScreen: React.FC = () => {
             }
             
             var safetyFactors = calculateSafetyFactors(currentRoute);
-            showSafetyAnalysis(safetyFactors);
             
-            // Send to React Native
+            // Send to React Native ONLY - don't show in WebView
             window.ReactNativeWebView.postMessage(JSON.stringify({
                 type: 'ROUTE_ANALYSIS',
                 routeData: currentRoute,
@@ -451,73 +445,6 @@ const MainScreen: React.FC = () => {
             };
         }
 
-        function showSafetyAnalysis(safetyFactors) {
-            var analysisDiv = document.getElementById('routeAnalysis');
-            var contentDiv = document.getElementById('analysisContent');
-            
-            var scoreColor = safetyFactors.safetyScore >= '8' ? '#28a745' : 
-                           safetyFactors.safetyScore >= '6' ? '#ffc107' : '#dc3545';
-            
-            var policeStationsHTML = '';
-            if (safetyFactors.policeStationsAlongRoute.length > 0) {
-                policeStationsHTML = \`
-                    <div style="margin-top: 10px;">
-                        <strong>🚔 Police Stations Along Route:</strong>
-                        \${safetyFactors.policeStationsAlongRoute.map(station => 
-                            '<div class="police-station-item">• ' + station.name + ' (' + station.distance + ')</div>'
-                        ).join('')}
-                    </div>
-                \`;
-            }
-            
-            contentDiv.innerHTML = \`
-                <h3 style="text-align: center; margin-bottom: 15px;">Route Safety Analysis</h3>
-                <div class="safety-score" style="background-color: \${scoreColor}; color: white;">
-                    Safety Score: \${safetyFactors.safetyScore}
-                </div>
-                <div class="safety-item">
-                    <strong>Route:</strong> \${currentRoute.start.name.split(',')[0]} → \${currentRoute.end.name.split(',')[0]}
-                </div>
-                <div class="safety-item">
-                    <strong>Distance:</strong> \${safetyFactors.routeLength}
-                </div>
-                <div class="safety-item">
-                    <strong>Time:</strong> \${safetyFactors.estimatedTime}
-                </div>
-                <div class="safety-item">
-                    <strong>🚔 Police Stations:</strong> \${safetyFactors.policeStations} nearby
-                </div>
-                <div class="safety-item">
-                    <strong>📹 CCTV Cameras:</strong> \${safetyFactors.cctvCameras} along route
-                </div>
-                <div class="safety-item">
-                    <strong>💡 Street Lighting:</strong> \${safetyFactors.wellLitAreas} well-lit
-                </div>
-                <div class="safety-item">
-                    <strong>👥 Crowd Presence:</strong> \${safetyFactors.crowdedAreas} crowded
-                </div>
-                \${policeStationsHTML}
-                \${safetyFactors.highRiskAreas.length > 0 ? \`
-                    <div style="margin-top: 15px;">
-                        <strong>⚠️ Areas Needing Attention:</strong>
-                        \${safetyFactors.highRiskAreas.map(risk => '<div class="risk-item">• ' + risk + '</div>').join('')}
-                    </div>
-                \` : ''}
-                \${safetyFactors.safeZones.length > 0 ? \`
-                    <div style="margin-top: 10px;">
-                        <strong>✅ Safe Zones:</strong>
-                        \${safetyFactors.safeZones.map(zone => '<div class="safe-item">• ' + zone + '</div>').join('')}
-                    </div>
-                \` : ''}
-            \`;
-            
-            analysisDiv.style.display = 'block';
-        }
-
-        function closeAnalysis() {
-            document.getElementById('routeAnalysis').style.display = 'none';
-        }
-
         // Listen for messages from React Native
         window.addEventListener('message', function(event) {
             var data = event.data;
@@ -525,11 +452,17 @@ const MainScreen: React.FC = () => {
                 geocodeLocation(data.start, function(startLocation) {
                     if (!startLocation) {
                         alert('Start location not found. Please try a different name.');
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                            type: 'ROUTE_ERROR'
+                        }));
                         return;
                     }
                     geocodeLocation(data.end, function(endLocation) {
                         if (!endLocation) {
                             alert('End location not found. Please try a different name.');
+                            window.ReactNativeWebView.postMessage(JSON.stringify({
+                                type: 'ROUTE_ERROR'
+                            }));
                             return;
                         }
                         drawRoute(startLocation, endLocation);
@@ -548,17 +481,22 @@ const MainScreen: React.FC = () => {
 </html>
 `;
 
-  // ... (rest of the React component remains the same, just update the interface and modal to show police stations along route)
-
   const handleMessage = (event: any) => {
     const data = JSON.parse(event.nativeEvent.data);
     
     if (data.type === 'ROUTE_ANALYSIS') {
       setIsLoading(false);
+      setIsRouteLoading(false);
       setCurrentSafetyData(data);
       setShowRouteAnalysis(true);
     } else if (data.type === 'POLICE_TOGGLED') {
       setShowPoliceStations(data.visible);
+    } else if (data.type === 'ROUTE_READY') {
+      setIsRouteLoading(false);
+      setIsLoading(false);
+    } else if (data.type === 'ROUTE_ERROR') {
+      setIsRouteLoading(false);
+      setIsLoading(false);
     }
   };
 
@@ -569,6 +507,7 @@ const MainScreen: React.FC = () => {
     }
 
     setIsLoading(true);
+    setIsRouteLoading(true);
     
     webViewRef.current?.injectJavaScript(`
       window.postMessage({
@@ -590,6 +529,7 @@ const MainScreen: React.FC = () => {
   };
 
   const analyzeRouteSafety = () => {
+    setIsLoading(true);
     webViewRef.current?.injectJavaScript(`
       analyzeRouteSafety();
       true;
@@ -606,55 +546,106 @@ const MainScreen: React.FC = () => {
 
   return (
     <View style={styles.container}>
-      {/* Search Controls */}
-      <View style={styles.controls}>
-        <TextInput
-          style={styles.input}
-          placeholder="Start location (e.g., MG Road)"
-          value={startLocation}
-          onChangeText={setStartLocation}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Destination (e.g., Koramangala)"
-          value={endLocation}
-          onChangeText={setEndLocation}
-        />
-        
-        <TouchableOpacity onPress={showLocationSuggestions} style={styles.suggestionButton}>
-          <Text style={styles.suggestionText}>📍 Need location ideas?</Text>
-        </TouchableOpacity>
-        
-        <View style={styles.buttonRow}>
-          <TouchableOpacity 
-            style={[styles.button, styles.primaryButton]}
-            onPress={handleFindRoute}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>Find Route</Text>
-            )}
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={[styles.button, showPoliceStations ? styles.activeButton : styles.secondaryButton]}
-            onPress={togglePoliceStations}
-          >
-            <Text style={styles.buttonText}>
-              {showPoliceStations ? '👮 Hide Police' : '👮 Show Police'}
+      {/* Collapsible Header */}
+      <Animated.View style={[styles.header, { height: headerHeight }]}>
+        {/* Header Top Bar */}
+        <View style={styles.headerTop}>
+          <Text style={styles.headerTitle}>Safe Route Finder</Text>
+          <TouchableOpacity onPress={toggleHeader} style={styles.expandButton}>
+            <Text style={styles.expandButtonText}>
+              {isHeaderExpanded ? '▲' : '▼'}
             </Text>
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity 
-          style={[styles.button, styles.analysisButton]}
-          onPress={analyzeRouteSafety}
-        >
-          <Text style={styles.buttonText}>🛡️ Analyze Safety</Text>
-        </TouchableOpacity>
-      </View>
+        {/* Search Inputs - Always Visible */}
+        <View style={styles.searchSection}>
+          <TextInput
+            style={styles.input}
+            placeholder="Start location (e.g., MG Road)"
+            value={startLocation}
+            onChangeText={setStartLocation}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Destination (e.g., Koramangala)"
+            value={endLocation}
+            onChangeText={setEndLocation}
+          />
+        </View>
+
+        {/* Expandable Section */}
+        {isHeaderExpanded && (
+          <View style={styles.expandableSection}>
+            <TouchableOpacity onPress={showLocationSuggestions} style={styles.suggestionButton}>
+              <Text style={styles.suggestionText}>📍 Need location ideas?</Text>
+            </TouchableOpacity>
+            
+            <View style={styles.buttonRow}>
+              <TouchableOpacity 
+                style={[styles.button, styles.primaryButton]}
+                onPress={handleFindRoute}
+                disabled={isLoading}
+              >
+                {isRouteLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.buttonText}>Find Route</Text>
+                )}
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[styles.button, showPoliceStations ? styles.activeButton : styles.secondaryButton]}
+                onPress={togglePoliceStations}
+              >
+                <Text style={styles.buttonText}>
+                  {showPoliceStations ? '👮 Hide Police' : '👮 Show Police'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity 
+              style={[styles.button, styles.analysisButton]}
+              onPress={analyzeRouteSafety}
+              disabled={isLoading}
+            >
+              {isLoading && !isRouteLoading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.buttonText}>🛡️ Analyze Safety</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Quick Actions - Always Visible */}
+        {!isHeaderExpanded && (
+          <View style={styles.quickActions}>
+            <TouchableOpacity 
+              style={[styles.quickButton, styles.primaryButton]}
+              onPress={handleFindRoute}
+              disabled={isLoading}
+            >
+              <Text style={styles.quickButtonText}>📍</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[styles.quickButton, showPoliceStations ? styles.activeButton : styles.secondaryButton]}
+              onPress={togglePoliceStations}
+            >
+              <Text style={styles.quickButtonText}>👮</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={[styles.quickButton, styles.analysisButton]}
+              onPress={analyzeRouteSafety}
+              disabled={isLoading}
+            >
+              <Text style={styles.quickButtonText}>🛡️</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </Animated.View>
 
       {/* Map */}
       <View style={styles.mapContainer}>
@@ -668,6 +659,17 @@ const MainScreen: React.FC = () => {
           onMessage={handleMessage}
         />
       </View>
+
+      {/* Loading Overlay */}
+      {isRouteLoading && (
+        <View style={styles.loadingOverlay}>
+          <View style={styles.loadingContent}>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={styles.loadingText}>Finding Route...</Text>
+            <Text style={styles.loadingSubtext}>Please wait while we calculate your route</Text>
+          </View>
+        </View>
+      )}
 
       {/* Route Analysis Modal */}
       <Modal
@@ -778,41 +780,69 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f5f5',
   },
-  controls: {
-    padding: 15,
+  header: {
     backgroundColor: 'white',
     borderBottomWidth: 1,
     borderBottomColor: '#ddd',
+    paddingHorizontal: 15,
+    paddingTop: 10,
+    paddingBottom: 15,
+    overflow: 'hidden',
+  },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  expandButton: {
+    padding: 5,
+  },
+  expandButtonText: {
+    fontSize: 16,
+    color: '#007AFF',
+    fontWeight: 'bold',
+  },
+  searchSection: {
+    marginBottom: 10,
   },
   input: {
     borderWidth: 1,
     borderColor: '#ddd',
     borderRadius: 8,
-    padding: 12,
-    marginBottom: 10,
+    padding: 10,
+    marginBottom: 8,
     backgroundColor: 'white',
-    fontSize: 16,
+    fontSize: 14,
+  },
+  expandableSection: {
+    // This section only shows when expanded
   },
   suggestionButton: {
-    padding: 10,
+    padding: 8,
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   suggestionText: {
     color: '#007AFF',
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '500',
   },
   buttonRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   button: {
-    padding: 15,
+    padding: 12,
     borderRadius: 8,
     alignItems: 'center',
-    marginHorizontal: 5,
+    marginHorizontal: 4,
   },
   primaryButton: {
     backgroundColor: '#007AFF',
@@ -833,13 +863,64 @@ const styles = StyleSheet.create({
   buttonText: {
     color: 'white',
     fontWeight: 'bold',
-    fontSize: 14,
+    fontSize: 12,
+  },
+  quickActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginTop: 5,
+  },
+  quickButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   mapContainer: {
     flex: 1,
   },
   webview: {
     flex: 1,
+  },
+  loadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  loadingContent: {
+    backgroundColor: 'white',
+    padding: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  loadingText: {
+    marginTop: 15,
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  loadingSubtext: {
+    marginTop: 5,
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
   },
   modalContainer: {
     flex: 1,
