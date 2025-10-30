@@ -136,7 +136,7 @@ const MainScreen: React.FC = () => {
       const consistentRoutes = sortedRoutes.map((route: any, index: number) => {
         let color, label;
         
-        // Always assign colors based on safety ranking, not original index
+        // Always assign colors based on safety ranking
         if (index === 0) {
           color = '#28a745'; // Green for safest
           label = 'Safest Route';
@@ -1116,7 +1116,7 @@ const styles = StyleSheet.create({
   },
 });
 
-// Your existing HTML content (keep this as is)
+// Updated HTML content with fixed route color assignment
 const htmlContent = `<!DOCTYPE html>
 <html>
 <head>
