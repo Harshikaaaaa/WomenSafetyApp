@@ -1,9 +1,11 @@
+import * as Location from 'expo-location';
 import { router } from 'expo-router';
 import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Animated,
+  Linking,
   Modal,
   ScrollView,
   StyleSheet,
@@ -25,9 +27,79 @@ const MainScreen: React.FC = () => {
   const [selectedRouteIndex, setSelectedRouteIndex] = useState<number>(0);
   const [isHeaderExpanded, setIsHeaderExpanded] = useState<boolean>(false);
   const [routeOptions, setRouteOptions] = useState<any[]>([]);
+  const [userLocation, setUserLocation] = useState<{latitude: number, longitude: number} | null>(null);
   
   const webViewRef = useRef<WebView>(null);
   const headerHeight = useRef(new Animated.Value(120)).current;
+
+  // Emergency contacts - you can customize these
+  const EMERGENCY_NUMBER = '100'; // Police emergency number in India
+  const TRUSTED_CONTACT = '911'; // Change this to your trusted contact number
+
+  // Get user's current location
+  const getUserLocation = async () => {
+    try {
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission denied', 'Location permission is required to share your location');
+        return null;
+      }
+
+      let location = await Location.getCurrentPositionAsync({});
+      const { latitude, longitude } = location.coords;
+      setUserLocation({ latitude, longitude });
+      return { latitude, longitude };
+    } catch (error) {
+      console.error('Error getting location:', error);
+      Alert.alert('Error', 'Could not get your current location');
+      return null;
+    }
+  };
+
+  // Emergency call function
+  const handleEmergencyCall = () => {
+    Alert.alert(
+      'Emergency Call',
+      'Do you want to call emergency services?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
+        {
+          text: 'Call',
+          onPress: () => {
+            Linking.openURL(`tel:${EMERGENCY_NUMBER}`).catch(err => {
+              Alert.alert('Error', 'Could not make the call');
+              console.error('Error opening dialer:', err);
+            });
+          }
+        }
+      ]
+    );
+  };
+
+  // Share location via SMS
+  const handleShareLocation = async () => {
+    try {
+      const location = await getUserLocation();
+      if (!location) return;
+
+      const { latitude, longitude } = location;
+      
+      // Create Google Maps link
+      const mapsUrl = `https://www.google.com/maps?q=${latitude},${longitude}`;
+      const message = `EMERGENCY: I need help! My current location: ${mapsUrl}`;
+      
+      Linking.openURL(`sms:${TRUSTED_CONTACT}?body=${encodeURIComponent(message)}`).catch(err => {
+        Alert.alert('Error', 'Could not open messaging app');
+        console.error('Error opening SMS:', err);
+      });
+    } catch (error) {
+      console.error('Error sharing location:', error);
+      Alert.alert('Error', 'Could not share location');
+    }
+  };
 
   const toggleHeader = () => {
     const toValue = isHeaderExpanded ? 120 : 200;
@@ -40,6 +112,1011 @@ const MainScreen: React.FC = () => {
     }).start();
   };
 
+  const handleMessage = (event: any) => {
+    const data = JSON.parse(event.nativeEvent.data);
+    
+    if (data.type === 'ROUTE_ANALYSIS') {
+      setIsLoading(false);
+      setIsRouteLoading(false);
+      setCurrentSafetyData(data);
+      setShowRouteAnalysis(true);
+      setSelectedRouteIndex(data.routeIndex);
+    } else if (data.type === 'POLICE_TOGGLED') {
+      setShowPoliceStations(data.visible);
+    } else if (data.type === 'ROUTES_READY') {
+      setIsRouteLoading(false);
+      setIsLoading(false);
+      
+      // Sort routes by safety score to ensure consistent ordering
+      const sortedRoutes = data.routes.sort((a: any, b: any) => {
+        return parseFloat(b.safetyFactors.safetyScore) - parseFloat(a.safetyFactors.safetyScore);
+      });
+      
+      // Assign consistent colors and labels based on safety ranking
+      const consistentRoutes = sortedRoutes.map((route: any, index: number) => {
+        let color, label;
+        
+        // Always assign colors based on safety ranking, not original index
+        if (index === 0) {
+          color = '#28a745'; // Green for safest
+          label = 'Safest Route';
+        } else if (index === 1) {
+          color = '#ffc107'; // Yellow for balanced
+          label = 'Balanced Route';
+        } else {
+          color = '#dc3545'; // Red for fastest/least safe
+          label = 'Fastest Route';
+        }
+        
+        return {
+          ...route,
+          color,
+          label,
+          originalIndex: route.index // Keep track of original index
+        };
+      });
+      
+      setRouteOptions(consistentRoutes);
+    } else if (data.type === 'ROUTE_ERROR') {
+      setIsRouteLoading(false);
+      setIsLoading(false);
+      Alert.alert('Error', 'Could not find route. Please try different locations.');
+    } else if (data.type === 'ROUTE_SELECTED') {
+      setSelectedRouteIndex(data.index);
+    }
+  };
+
+  const handleFindRoute = () => {
+    if (!startLocation.trim() || !endLocation.trim()) {
+      Alert.alert('Error', 'Please enter both start and end locations');
+      return;
+    }
+
+    setIsLoading(true);
+    setIsRouteLoading(true);
+    
+    webViewRef.current?.injectJavaScript(`
+      window.postMessage({
+        type: 'FIND_ROUTE',
+        start: '${startLocation}',
+        end: '${endLocation}'
+      });
+      true;
+    `);
+  };
+
+  const togglePoliceStations = () => {
+    webViewRef.current?.injectJavaScript(`
+      window.postMessage({
+        type: 'TOGGLE_POLICE'
+      });
+      true;
+    `);
+  };
+
+  const toggleHeatmap = () => {
+    webViewRef.current?.injectJavaScript(`
+      toggleHeatmap();
+      true;
+    `);
+  };
+
+  const analyzeRouteSafety = () => {
+    if (routeOptions.length === 0) {
+      Alert.alert('No Routes', 'Please generate routes first by clicking "Find Routes"');
+      return;
+    }
+    
+    setIsLoading(true);
+    webViewRef.current?.injectJavaScript(`
+      analyzeCurrentRoute();
+      true;
+    `);
+  };
+
+  const analyzeSpecificRoute = (index: number) => {
+    setSelectedRouteIndex(index);
+    setIsLoading(true);
+    
+    // Use the original index for the WebView communication
+    const originalIndex = routeOptions[index]?.originalIndex || index;
+    
+    webViewRef.current?.injectJavaScript(`
+      selectRoute(${originalIndex});
+      setTimeout(function() {
+        analyzeSpecificRoute(${originalIndex});
+      }, 100);
+      true;
+    `);
+  };
+
+  const selectRoute = (index: number) => {
+    setSelectedRouteIndex(index);
+    
+    // Use the original index for the WebView communication
+    const originalIndex = routeOptions[index]?.originalIndex || index;
+    
+    webViewRef.current?.injectJavaScript(`
+      selectRoute(${originalIndex});
+      true;
+    `);
+  };
+
+  const showLocationSuggestions = () => {
+    Alert.alert(
+      'Location Suggestions',
+      'Try these Bangalore locations:\n\n• MG Road\n• Koramangala\n• Indiranagar\n• HSR Layout\n• Whitefield\n• Jayanagar\n• Electronic City\n• Marathahalli\n• Yeshwanthpur\n• Yelahanka\n• Kengeri',
+      [{ text: 'OK' }]
+    );
+  };
+
+  const handleLogout = () => {
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to logout?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Logout', onPress: () => router.replace('/login') }
+      ]
+    );
+  };
+
+  return (
+    <View style={styles.container}>
+      {/* Compact Header */}
+      <Animated.View style={[styles.header, { height: headerHeight }]}>
+        {/* Header Top Bar */}
+        <View style={styles.headerTop}>
+          <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
+            <Text style={styles.logoutButtonText}>👤</Text>
+          </TouchableOpacity>
+          
+          {/* Location display when collapsed */}
+          {!isHeaderExpanded && (
+            <View style={styles.compactLocation}>
+              <Text style={styles.compactLocationText} numberOfLines={1}>
+                📍 {startLocation || 'Start'} → {endLocation || 'End'}
+              </Text>
+            </View>
+          )}
+          
+          <TouchableOpacity onPress={toggleHeader} style={styles.expandButton}>
+            <Text style={styles.expandButtonText}>
+              {isHeaderExpanded ? '▲' : '▼'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Search Inputs - Always Visible */}
+        <View style={styles.searchSection}>
+          <TextInput
+            style={styles.input}
+            placeholder="Start location"
+            value={startLocation}
+            onChangeText={setStartLocation}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Destination"
+            value={endLocation}
+            onChangeText={setEndLocation}
+          />
+        </View>
+
+        {/* Quick Actions - Always Visible */}
+        <View style={styles.quickActions}>
+          <TouchableOpacity 
+            style={[styles.quickButton, styles.primaryButton]}
+            onPress={handleFindRoute}
+            disabled={isLoading}
+          >
+            <Text style={styles.quickButtonText}>📍 Find Routes</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[styles.quickButton, showPoliceStations ? styles.activeButton : styles.secondaryButton]}
+            onPress={togglePoliceStations}
+          >
+            <Text style={styles.quickButtonText}>
+              {showPoliceStations ? '👮 Hide' : '👮 Show'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={[styles.quickButton, styles.heatmapButton]}
+            onPress={toggleHeatmap}
+          >
+            <Text style={styles.quickButtonText}>🔥 Heatmap</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Expandable Section - Only shows when expanded */}
+        {isHeaderExpanded && (
+          <View style={styles.expandableSection}>
+            <TouchableOpacity onPress={showLocationSuggestions} style={styles.suggestionButton}>
+              <Text style={styles.suggestionText}>📍 Need location ideas?</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[styles.button, styles.analysisButton]}
+              onPress={analyzeRouteSafety}
+              disabled={isLoading || routeOptions.length === 0}
+            >
+              {isLoading && !isRouteLoading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.buttonText}>🛡️ Analyze Route Safety</Text>
+              )}
+            </TouchableOpacity>
+
+            {/* Route quick info when available */}
+            {routeOptions.length > 0 && (
+              <View style={styles.quickRouteInfo}>
+                <Text style={styles.quickRouteTitle}>Available Routes:</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  {routeOptions.map((route, index) => (
+                    <TouchableOpacity 
+                      key={index}
+                      style={[
+                        styles.quickRouteItem,
+                        selectedRouteIndex === index && styles.selectedQuickRoute
+                      ]}
+                      onPress={() => selectRoute(index)}
+                    >
+                      <View style={[styles.routeColorDot, { backgroundColor: route.color }]} />
+                      <Text style={styles.quickRouteText}>
+                        {route.label.split(' ')[0]}
+                      </Text>
+                      <Text style={styles.quickRouteScore}>
+                        {route.safetyFactors.safetyScore}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+          </View>
+        )}
+      </Animated.View>
+
+      {/* Map */}
+      <View style={styles.mapContainer}>
+        <WebView
+          ref={webViewRef}
+          source={{ html: htmlContent }}
+          style={styles.webview}
+          javaScriptEnabled={true}
+          domStorageEnabled={true}
+          startInLoadingState={true}
+          onMessage={handleMessage}
+        />
+      </View>
+
+      {/* Emergency Buttons at Bottom */}
+      <View style={styles.emergencyContainer}>
+        <TouchableOpacity 
+          style={[styles.emergencyButton, styles.callButton]}
+          onPress={handleEmergencyCall}
+        >
+          <Text style={styles.emergencyIcon}>📞</Text>
+          <Text style={styles.emergencyText}>Emergency Call</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.emergencyButton, styles.locationButton]}
+          onPress={handleShareLocation}
+        >
+          <Text style={styles.emergencyIcon}>📍</Text>
+          <Text style={styles.emergencyText}>Share Location</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Loading Overlay */}
+      {isRouteLoading && (
+        <View style={styles.loadingOverlay}>
+          <View style={styles.loadingContent}>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={styles.loadingText}>Finding Routes...</Text>
+            <Text style={styles.loadingSubtext}>Calculating 3 different route options for you</Text>
+          </View>
+        </View>
+      )}
+
+      {/* Route Analysis Modal */}
+      <Modal
+        visible={showRouteAnalysis}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowRouteAnalysis(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalContent}>
+            <TouchableOpacity 
+              style={styles.closeButton}
+              onPress={() => setShowRouteAnalysis(false)}
+            >
+              <Text style={styles.closeButtonText}>×</Text>
+            </TouchableOpacity>
+            
+            {currentSafetyData && (
+              <ScrollView style={styles.analysisContent} showsVerticalScrollIndicator={false}>
+                <Text style={styles.modalTitle}>
+                  {currentSafetyData.routeData.label} - Safety Report
+                </Text>
+                
+                <View style={[styles.scoreContainer, 
+                  { backgroundColor: getScoreColor(currentSafetyData.safetyFactors.safetyScore) }]}>
+                  <Text style={styles.scoreText}>Overall Safety Score</Text>
+                  <Text style={styles.scoreValue}>{currentSafetyData.safetyFactors.safetyScore}</Text>
+                  <Text style={styles.scoreDescription}>
+                    {getScoreDescription(currentSafetyData.safetyFactors.safetyScore)}
+                  </Text>
+                </View>
+
+                <View style={styles.routeInfo}>
+                  <Text style={styles.infoTitle}>Route Information</Text>
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>📍 Start:</Text>
+                    <Text style={styles.infoValue}>{currentSafetyData.routeData.start.name.split(',')[0]}</Text>
+                  </View>
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>🎯 Destination:</Text>
+                    <Text style={styles.infoValue}>{currentSafetyData.routeData.end.name.split(',')[0]}</Text>
+                  </View>
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>📏 Distance:</Text>
+                    <Text style={styles.infoValue}>{currentSafetyData.safetyFactors.routeLength}</Text>
+                  </View>
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>⏱ Estimated Time:</Text>
+                    <Text style={styles.infoValue}>{currentSafetyData.safetyFactors.estimatedTime}</Text>
+                  </View>
+                </View>
+
+                {/* Safety Metrics Grid */}
+                <View style={styles.safetyMetrics}>
+                  <Text style={styles.sectionTitle}>Safety Metrics</Text>
+                  
+                  <View style={styles.metricsGrid}>
+                    <View style={styles.metricCard}>
+                      <Text style={styles.metricIcon}>🚔</Text>
+                      <Text style={styles.metricValue}>{currentSafetyData.safetyFactors.policeStations}</Text>
+                      <Text style={styles.metricLabel}>Police Stations</Text>
+                      <Text style={styles.metricDescription}>Within 3km of route</Text>
+                    </View>
+                    
+                    <View style={styles.metricCard}>
+                      <Text style={styles.metricIcon}>📹</Text>
+                      <Text style={styles.metricValue}>{currentSafetyData.safetyFactors.cctvCameras}</Text>
+                      <Text style={styles.metricLabel}>CCTV Cameras</Text>
+                      <Text style={styles.metricDescription}>Estimated coverage</Text>
+                    </View>
+                    
+                    <View style={styles.metricCard}>
+                      <Text style={styles.metricIcon}>💡</Text>
+                      <Text style={styles.metricValue}>{currentSafetyData.safetyFactors.wellLitAreas}</Text>
+                      <Text style={styles.metricLabel}>Well Lit</Text>
+                      <Text style={styles.metricDescription}>Street lighting</Text>
+                    </View>
+                    
+                    <View style={styles.metricCard}>
+                      <Text style={styles.metricIcon}>👥</Text>
+                      <Text style={styles.metricValue}>{currentSafetyData.safetyFactors.crowdedAreas}</Text>
+                      <Text style={styles.metricLabel}>Crowded Areas</Text>
+                      <Text style={styles.metricDescription}>Good visibility</Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Police Stations Details */}
+                {currentSafetyData.safetyFactors.policeStationsDetailed && currentSafetyData.safetyFactors.policeStationsDetailed.length > 0 && (
+                  <View style={styles.policeStationsSection}>
+                    <Text style={styles.sectionTitle}>🚔 Police Stations Nearby</Text>
+                    <Text style={styles.policeStationsSubtitle}>
+                      {currentSafetyData.safetyFactors.policeStations} stations within 3km of your route
+                    </Text>
+                    {currentSafetyData.safetyFactors.policeStationsDetailed.slice(0, 5).map((station: any, index: number) => (
+                      <View key={index} style={styles.policeStationItem}>
+                        <Text style={styles.policeStationName}>{station.name}</Text>
+                        <Text style={styles.policeStationDistance}>{station.distance} km from route</Text>
+                      </View>
+                    ))}
+                    {currentSafetyData.safetyFactors.policeStationsDetailed.length > 5 && (
+                      <Text style={styles.moreStationsText}>
+                        +{currentSafetyData.safetyFactors.policeStationsDetailed.length - 5} more stations nearby
+                      </Text>
+                    )}
+                  </View>
+                )}
+
+                {/* Risk Areas */}
+                {currentSafetyData.safetyFactors.highRiskAreas.length > 0 && (
+                  <View style={styles.riskSection}>
+                    <Text style={styles.sectionTitle}>⚠️ Areas Needing Attention</Text>
+                    {currentSafetyData.safetyFactors.highRiskAreas.map((risk: string, index: number) => (
+                      <View key={index} style={styles.riskItem}>
+                        <Text style={styles.riskBullet}>•</Text>
+                        <Text style={styles.riskText}>{risk}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {/* Safe Zones */}
+                {currentSafetyData.safetyFactors.safeZones.length > 0 && (
+                  <View style={styles.safeSection}>
+                    <Text style={styles.sectionTitle}>✅ Safe Zones</Text>
+                    {currentSafetyData.safetyFactors.safeZones.map((zone: string, index: number) => (
+                      <View key={index} style={styles.safeItem}>
+                        <Text style={styles.safeBullet}>•</Text>
+                        <Text style={styles.safeText}>{zone}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {/* Safety Recommendations */}
+                <View style={styles.recommendations}>
+                  <Text style={styles.sectionTitle}>🛡️ Safety Recommendations</Text>
+                  <View style={styles.recommendationItem}>
+                    <Text style={styles.recommendationBullet}>•</Text>
+                    <Text style={styles.recommendationText}>Share your live location with trusted contacts</Text>
+                  </View>
+                  <View style={styles.recommendationItem}>
+                    <Text style={styles.recommendationBullet}>•</Text>
+                    <Text style={styles.recommendationText}>Keep emergency numbers handy</Text>
+                  </View>
+                  <View style={styles.recommendationItem}>
+                    <Text style={styles.recommendationBullet}>•</Text>
+                    <Text style={styles.recommendationText}>Avoid poorly lit areas after dark</Text>
+                  </View>
+                  <View style={styles.recommendationItem}>
+                    <Text style={styles.recommendationBullet}>•</Text>
+                    <Text style={styles.recommendationText}>Stay aware of your surroundings</Text>
+                  </View>
+                  {parseFloat(currentSafetyData.safetyFactors.safetyScore) < 7 && (
+                    <View style={styles.recommendationItem}>
+                      <Text style={styles.recommendationBullet}>•</Text>
+                      <Text style={[styles.recommendationText, styles.importantRecommendation]}>
+                        Consider alternative transportation during late hours
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                <TouchableOpacity 
+                  style={styles.closeAnalysisButton}
+                  onPress={() => setShowRouteAnalysis(false)}
+                >
+                  <Text style={styles.closeAnalysisButtonText}>Close Analysis</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+};
+
+const getScoreColor = (score: string) => {
+  const numericScore = parseFloat(score);
+  if (numericScore >= 8) return '#28A745';
+  if (numericScore >= 7) return '#FFC107';
+  if (numericScore >= 6) return '#FF9800';
+  return '#DC3545';
+};
+
+const getScoreDescription = (score: string) => {
+  const numericScore = parseFloat(score);
+  if (numericScore >= 8) return 'Very Safe';
+  if (numericScore >= 7) return 'Safe';
+  if (numericScore >= 6) return 'Moderately Safe';
+  return 'Needs Caution';
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+  },
+  header: {
+    backgroundColor: 'white',
+    borderBottomWidth: 1,
+    borderBottomColor: '#ddd',
+    paddingHorizontal: 15,
+    paddingTop: 40,
+    paddingBottom: 10,
+    overflow: 'hidden',
+  },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  compactLocation: {
+    flex: 1,
+    marginHorizontal: 10,
+  },
+  compactLocationText: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
+    fontWeight: '500',
+  },
+  logoutButton: {
+    padding: 5,
+  },
+  logoutButtonText: {
+    fontSize: 18,
+  },
+  expandButton: {
+    padding: 5,
+  },
+  expandButtonText: {
+    fontSize: 14,
+    color: '#007AFF',
+    fontWeight: 'bold',
+  },
+  searchSection: {
+    marginBottom: 8,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 6,
+    padding: 8,
+    marginBottom: 6,
+    backgroundColor: 'white',
+    fontSize: 12,
+  },
+  quickActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 5,
+  },
+  quickButton: {
+    flex: 1,
+    padding: 8,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginHorizontal: 2,
+  },
+  quickButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 10,
+  },
+  expandableSection: {
+    marginTop: 5,
+  },
+  suggestionButton: {
+    padding: 6,
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  suggestionText: {
+    color: '#007AFF',
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  button: {
+    padding: 10,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  analysisButton: {
+    backgroundColor: '#FFC107',
+  },
+  buttonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 11,
+  },
+  quickRouteInfo: {
+    marginTop: 8,
+  },
+  quickRouteTitle: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#666',
+    marginBottom: 5,
+  },
+  quickRouteItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+    padding: 6,
+    borderRadius: 6,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  selectedQuickRoute: {
+    borderColor: '#007AFF',
+    backgroundColor: '#e7f3ff',
+  },
+  routeColorDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 4,
+  },
+  quickRouteText: {
+    fontSize: 10,
+    color: '#333',
+    marginRight: 4,
+  },
+  quickRouteScore: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#007AFF',
+  },
+  mapContainer: {
+    flex: 1,
+  },
+  webview: {
+    flex: 1,
+  },
+  // Emergency buttons container
+  emergencyContainer: {
+    position: 'absolute',
+    bottom: 20,
+    left: 20,
+    right: 20,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 15,
+    padding: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
+  },
+  emergencyButton: {
+    flex: 1,
+    alignItems: 'center',
+    padding: 15,
+    borderRadius: 10,
+    marginHorizontal: 5,
+    minHeight: 70,
+    justifyContent: 'center',
+  },
+  callButton: {
+    backgroundColor: '#DC3545',
+  },
+  locationButton: {
+    backgroundColor: '#007AFF',
+  },
+  emergencyIcon: {
+    fontSize: 20,
+    marginBottom: 5,
+  },
+  emergencyText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  loadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  loadingContent: {
+    backgroundColor: 'white',
+    padding: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  loadingText: {
+    marginTop: 15,
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  loadingSubtext: {
+    marginTop: 5,
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+  },
+  modalContainer: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: '90%',
+    minHeight: '50%',
+  },
+  closeButton: {
+    position: 'absolute',
+    top: 15,
+    right: 20,
+    backgroundColor: '#DC3545',
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
+  },
+  closeButtonText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  analysisContent: {
+    marginTop: 10,
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 20,
+    color: '#333',
+  },
+  scoreContainer: {
+    padding: 25,
+    borderRadius: 15,
+    alignItems: 'center',
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  scoreText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  scoreValue: {
+    color: 'white',
+    fontSize: 36,
+    fontWeight: 'bold',
+    marginTop: 5,
+  },
+  scoreDescription: {
+    color: 'white',
+    fontSize: 14,
+    marginTop: 5,
+    fontWeight: '500',
+  },
+  routeInfo: {
+    backgroundColor: '#f8f9fa',
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 20,
+  },
+  infoTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    color: '#333',
+  },
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  infoLabel: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '500',
+  },
+  infoValue: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: 'bold',
+  },
+  safetyMetrics: {
+    marginBottom: 20,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    color: '#333',
+  },
+  metricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  metricCard: {
+    width: '48%',
+    backgroundColor: '#f8f9fa',
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  metricIcon: {
+    fontSize: 24,
+    marginBottom: 5,
+  },
+  metricValue: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#007AFF',
+    marginBottom: 2,
+  },
+  metricLabel: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  metricDescription: {
+    fontSize: 10,
+    color: '#999',
+    textAlign: 'center',
+  },
+  policeStationsSection: {
+    backgroundColor: '#e7f3ff',
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 20,
+  },
+  policeStationsSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 10,
+  },
+  policeStationItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#cce7ff',
+  },
+  policeStationName: {
+    fontSize: 14,
+    color: '#333',
+    flex: 1,
+  },
+  policeStationDistance: {
+    fontSize: 12,
+    color: '#007AFF',
+    fontWeight: '600',
+  },
+  moreStationsText: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
+    marginTop: 5,
+    textAlign: 'center',
+  },
+  riskSection: {
+    marginBottom: 15,
+    padding: 15,
+    backgroundColor: '#fff3cd',
+    borderRadius: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#ffc107',
+  },
+  safeSection: {
+    marginBottom: 15,
+    padding: 15,
+    backgroundColor: '#d4edda',
+    borderRadius: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#28a745',
+  },
+  riskItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 6,
+  },
+  riskBullet: {
+    color: '#856404',
+    fontSize: 14,
+    marginRight: 8,
+    fontWeight: 'bold',
+  },
+  riskText: {
+    color: '#856404',
+    fontSize: 14,
+    flex: 1,
+  },
+  safeItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 6,
+  },
+  safeBullet: {
+    color: '#155724',
+    fontSize: 14,
+    marginRight: 8,
+    fontWeight: 'bold',
+  },
+  safeText: {
+    color: '#155724',
+    fontSize: 14,
+    flex: 1,
+  },
+  recommendations: {
+    backgroundColor: '#e7f3ff',
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 20,
+  },
+  recommendationItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+  },
+  recommendationBullet: {
+    color: '#004085',
+    fontSize: 14,
+    marginRight: 8,
+    fontWeight: 'bold',
+  },
+  recommendationText: {
+    fontSize: 14,
+    color: '#004085',
+    flex: 1,
+    lineHeight: 20,
+  },
+  importantRecommendation: {
+    fontWeight: 'bold',
+    color: '#dc3545',
+  },
+  closeAnalysisButton: {
+    backgroundColor: '#6C757D',
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  closeAnalysisButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  primaryButton: {
+    backgroundColor: '#007AFF',
+  },
+  secondaryButton: {
+    backgroundColor: '#6C757D',
+  },
+  activeButton: {
+    backgroundColor: '#28A745',
+  },
+  heatmapButton: {
+    backgroundColor: '#FF6B35',
+  },
+});
+
+// Your existing HTML content (keep this as is)
 const htmlContent = `<!DOCTYPE html>
 <html>
 <head>
@@ -525,12 +1602,13 @@ const htmlContent = `<!DOCTYPE html>
             // Use hardcoded police stations for route analysis
             allPoliceStations = hardcodedPoliceStations;
             
-            // Generate 3 different route options
+            // Generate 3 different route options with consistent color assignment
             generateRouteOptions(start, end);
         }
 
         function generateRouteOptions(start, end) {
             // Generate different route variations using alternative points
+            // Always assign colors consistently based on safety ranking
             generateRouteVariation(start, end, 0, '#28a745', 'Safest Route', 0.02);
             generateRouteVariation(start, end, 1, '#ffc107', 'Balanced Route', 0.04);
             generateRouteVariation(start, end, 2, '#dc3545', 'Fastest Route', 0.08);
@@ -823,10 +1901,12 @@ const htmlContent = `<!DOCTYPE html>
                 hideLoading();
                 showRouteControls();
                 updateRouteButtons();
-                // Sort routes by safety score
+                
+                // Sort routes by safety score to ensure consistent ordering
                 currentRoutes.sort((a, b) => {
                     return parseFloat(b.safetyFactors.safetyScore) - parseFloat(a.safetyFactors.safetyScore);
                 });
+                
                 window.ReactNativeWebView.postMessage(JSON.stringify({
                     type: 'ROUTES_READY',
                     routes: currentRoutes
@@ -980,910 +2060,5 @@ const htmlContent = `<!DOCTYPE html>
     </script>
 </body>
 </html>`;
-
-  // ... (rest of the React Native component remains the same as before)
-  // Only the HTML content above was modified
-
-  const handleMessage = (event: any) => {
-    const data = JSON.parse(event.nativeEvent.data);
-    
-    if (data.type === 'ROUTE_ANALYSIS') {
-      setIsLoading(false);
-      setIsRouteLoading(false);
-      setCurrentSafetyData(data);
-      setShowRouteAnalysis(true);
-      setSelectedRouteIndex(data.routeIndex);
-    } else if (data.type === 'POLICE_TOGGLED') {
-      setShowPoliceStations(data.visible);
-    } else if (data.type === 'ROUTES_READY') {
-      setIsRouteLoading(false);
-      setIsLoading(false);
-      setRouteOptions(data.routes);
-    } else if (data.type === 'ROUTE_ERROR') {
-      setIsRouteLoading(false);
-      setIsLoading(false);
-      Alert.alert('Error', 'Could not find route. Please try different locations.');
-    } else if (data.type === 'ROUTE_SELECTED') {
-      setSelectedRouteIndex(data.index);
-    }
-  };
-
-  const handleFindRoute = () => {
-    if (!startLocation.trim() || !endLocation.trim()) {
-      Alert.alert('Error', 'Please enter both start and end locations');
-      return;
-    }
-
-    setIsLoading(true);
-    setIsRouteLoading(true);
-    
-    webViewRef.current?.injectJavaScript(`
-      window.postMessage({
-        type: 'FIND_ROUTE',
-        start: '${startLocation}',
-        end: '${endLocation}'
-      });
-      true;
-    `);
-  };
-
-  const togglePoliceStations = () => {
-    webViewRef.current?.injectJavaScript(`
-      window.postMessage({
-        type: 'TOGGLE_POLICE'
-      });
-      true;
-    `);
-  };
-
-  const toggleHeatmap = () => {
-    webViewRef.current?.injectJavaScript(`
-      toggleHeatmap();
-      true;
-    `);
-  };
-
-  const analyzeRouteSafety = () => {
-    if (routeOptions.length === 0) {
-      Alert.alert('No Routes', 'Please generate routes first by clicking "Find Routes"');
-      return;
-    }
-    
-    setIsLoading(true);
-    webViewRef.current?.injectJavaScript(`
-      analyzeCurrentRoute();
-      true;
-    `);
-  };
-
-  const analyzeSpecificRoute = (index: number) => {
-    setSelectedRouteIndex(index);
-    setIsLoading(true);
-    webViewRef.current?.injectJavaScript(`
-      selectRoute(${index});
-      setTimeout(function() {
-        analyzeCurrentRoute();
-      }, 100);
-      true;
-    `);
-  };
-
-  const selectRoute = (index: number) => {
-    setSelectedRouteIndex(index);
-    webViewRef.current?.injectJavaScript(`
-      selectRoute(${index});
-      true;
-    `);
-  };
-
-  const showLocationSuggestions = () => {
-    Alert.alert(
-      'Location Suggestions',
-      'Try these Bangalore locations:\n\n• MG Road\n• Koramangala\n• Indiranagar\n• HSR Layout\n• Whitefield\n• Jayanagar\n• Electronic City\n• Marathahalli\n• Yeshwanthpur\n• Yelahanka\n• Kengeri',
-      [{ text: 'OK' }]
-    );
-  };
-
-  const handleLogout = () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Logout', onPress: () => router.replace('/login') }
-      ]
-    );
-  };
-
-  return (
-    <View style={styles.container}>
-      {/* Compact Header */}
-      <Animated.View style={[styles.header, { height: headerHeight }]}>
-        {/* Header Top Bar */}
-        <View style={styles.headerTop}>
-          <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-            <Text style={styles.logoutButtonText}>👤</Text>
-          </TouchableOpacity>
-          
-          {/* Location display when collapsed */}
-          {!isHeaderExpanded && (
-            <View style={styles.compactLocation}>
-              <Text style={styles.compactLocationText} numberOfLines={1}>
-                📍 {startLocation || 'Start'} → {endLocation || 'End'}
-              </Text>
-            </View>
-          )}
-          
-          <TouchableOpacity onPress={toggleHeader} style={styles.expandButton}>
-            <Text style={styles.expandButtonText}>
-              {isHeaderExpanded ? '▲' : '▼'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Search Inputs - Always Visible */}
-        <View style={styles.searchSection}>
-          <TextInput
-            style={styles.input}
-            placeholder="Start location"
-            value={startLocation}
-            onChangeText={setStartLocation}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Destination"
-            value={endLocation}
-            onChangeText={setEndLocation}
-          />
-        </View>
-
-        {/* Quick Actions - Always Visible */}
-        <View style={styles.quickActions}>
-          <TouchableOpacity 
-            style={[styles.quickButton, styles.primaryButton]}
-            onPress={handleFindRoute}
-            disabled={isLoading}
-          >
-            <Text style={styles.quickButtonText}>📍 Find Routes</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={[styles.quickButton, showPoliceStations ? styles.activeButton : styles.secondaryButton]}
-            onPress={togglePoliceStations}
-          >
-            <Text style={styles.quickButtonText}>
-              {showPoliceStations ? '👮 Hide' : '👮 Show'}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={[styles.quickButton, styles.heatmapButton]}
-            onPress={toggleHeatmap}
-          >
-            <Text style={styles.quickButtonText}>🔥 Heatmap</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Expandable Section - Only shows when expanded */}
-        {isHeaderExpanded && (
-          <View style={styles.expandableSection}>
-            <TouchableOpacity onPress={showLocationSuggestions} style={styles.suggestionButton}>
-              <Text style={styles.suggestionText}>📍 Need location ideas?</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={[styles.button, styles.analysisButton]}
-              onPress={analyzeRouteSafety}
-              disabled={isLoading || routeOptions.length === 0}
-            >
-              {isLoading && !isRouteLoading ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.buttonText}>🛡️ Analyze Route Safety</Text>
-              )}
-            </TouchableOpacity>
-
-            {/* Route quick info when available */}
-            {routeOptions.length > 0 && (
-              <View style={styles.quickRouteInfo}>
-                <Text style={styles.quickRouteTitle}>Available Routes:</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {routeOptions.slice(0, 3).map((route, index) => (
-                    <TouchableOpacity 
-                      key={index}
-                      style={[
-                        styles.quickRouteItem,
-                        selectedRouteIndex === index && styles.selectedQuickRoute
-                      ]}
-                      onPress={() => selectRoute(index)}
-                    >
-                      <View style={[styles.routeColorDot, { backgroundColor: route.color }]} />
-                      <Text style={styles.quickRouteText}>
-                        {route.label.split(' ')[0]}
-                      </Text>
-                      <Text style={styles.quickRouteScore}>
-                        {route.safetyFactors.safetyScore}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              </View>
-            )}
-          </View>
-        )}
-      </Animated.View>
-
-      {/* Map */}
-      <View style={styles.mapContainer}>
-        <WebView
-          ref={webViewRef}
-          source={{ html: htmlContent }}
-          style={styles.webview}
-          javaScriptEnabled={true}
-          domStorageEnabled={true}
-          startInLoadingState={true}
-          onMessage={handleMessage}
-        />
-      </View>
-
-      {/* Loading Overlay */}
-      {isRouteLoading && (
-        <View style={styles.loadingOverlay}>
-          <View style={styles.loadingContent}>
-            <ActivityIndicator size="large" color="#007AFF" />
-            <Text style={styles.loadingText}>Finding Routes...</Text>
-            <Text style={styles.loadingSubtext}>Calculating 3 different route options for you</Text>
-          </View>
-        </View>
-      )}
-
-      {/* Route Analysis Modal */}
-      <Modal
-        visible={showRouteAnalysis}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setShowRouteAnalysis(false)}
-      >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
-            <TouchableOpacity 
-              style={styles.closeButton}
-              onPress={() => setShowRouteAnalysis(false)}
-            >
-              <Text style={styles.closeButtonText}>×</Text>
-            </TouchableOpacity>
-            
-            {currentSafetyData && (
-              <ScrollView style={styles.analysisContent} showsVerticalScrollIndicator={false}>
-                <Text style={styles.modalTitle}>
-                  {currentSafetyData.routeData.label} - Safety Report
-                </Text>
-                
-                <View style={[styles.scoreContainer, 
-                  { backgroundColor: getScoreColor(currentSafetyData.safetyFactors.safetyScore) }]}>
-                  <Text style={styles.scoreText}>Overall Safety Score</Text>
-                  <Text style={styles.scoreValue}>{currentSafetyData.safetyFactors.safetyScore}</Text>
-                  <Text style={styles.scoreDescription}>
-                    {getScoreDescription(currentSafetyData.safetyFactors.safetyScore)}
-                  </Text>
-                </View>
-
-                <View style={styles.routeInfo}>
-                  <Text style={styles.infoTitle}>Route Information</Text>
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>📍 Start:</Text>
-                    <Text style={styles.infoValue}>{currentSafetyData.routeData.start.name.split(',')[0]}</Text>
-                  </View>
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>🎯 Destination:</Text>
-                    <Text style={styles.infoValue}>{currentSafetyData.routeData.end.name.split(',')[0]}</Text>
-                  </View>
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>📏 Distance:</Text>
-                    <Text style={styles.infoValue}>{currentSafetyData.safetyFactors.routeLength}</Text>
-                  </View>
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>⏱ Estimated Time:</Text>
-                    <Text style={styles.infoValue}>{currentSafetyData.safetyFactors.estimatedTime}</Text>
-                  </View>
-                </View>
-
-                {/* Safety Metrics Grid */}
-                <View style={styles.safetyMetrics}>
-                  <Text style={styles.sectionTitle}>Safety Metrics</Text>
-                  
-                  <View style={styles.metricsGrid}>
-                    <View style={styles.metricCard}>
-                      <Text style={styles.metricIcon}>🚔</Text>
-                      <Text style={styles.metricValue}>{currentSafetyData.safetyFactors.policeStations}</Text>
-                      <Text style={styles.metricLabel}>Police Stations</Text>
-                      <Text style={styles.metricDescription}>Within 3km of route</Text>
-                    </View>
-                    
-                    <View style={styles.metricCard}>
-                      <Text style={styles.metricIcon}>📹</Text>
-                      <Text style={styles.metricValue}>{currentSafetyData.safetyFactors.cctvCameras}</Text>
-                      <Text style={styles.metricLabel}>CCTV Cameras</Text>
-                      <Text style={styles.metricDescription}>Estimated coverage</Text>
-                    </View>
-                    
-                    <View style={styles.metricCard}>
-                      <Text style={styles.metricIcon}>💡</Text>
-                      <Text style={styles.metricValue}>{currentSafetyData.safetyFactors.wellLitAreas}</Text>
-                      <Text style={styles.metricLabel}>Well Lit</Text>
-                      <Text style={styles.metricDescription}>Street lighting</Text>
-                    </View>
-                    
-                    <View style={styles.metricCard}>
-                      <Text style={styles.metricIcon}>👥</Text>
-                      <Text style={styles.metricValue}>{currentSafetyData.safetyFactors.crowdedAreas}</Text>
-                      <Text style={styles.metricLabel}>Crowded Areas</Text>
-                      <Text style={styles.metricDescription}>Good visibility</Text>
-                    </View>
-                  </View>
-                </View>
-
-                {/* Police Stations Details */}
-                {currentSafetyData.safetyFactors.policeStationsDetailed && currentSafetyData.safetyFactors.policeStationsDetailed.length > 0 && (
-                  <View style={styles.policeStationsSection}>
-                    <Text style={styles.sectionTitle}>🚔 Police Stations Nearby</Text>
-                    <Text style={styles.policeStationsSubtitle}>
-                      {currentSafetyData.safetyFactors.policeStations} stations within 3km of your route
-                    </Text>
-                    {currentSafetyData.safetyFactors.policeStationsDetailed.slice(0, 5).map((station: any, index: number) => (
-                      <View key={index} style={styles.policeStationItem}>
-                        <Text style={styles.policeStationName}>{station.name}</Text>
-                        <Text style={styles.policeStationDistance}>{station.distance} km from route</Text>
-                      </View>
-                    ))}
-                    {currentSafetyData.safetyFactors.policeStationsDetailed.length > 5 && (
-                      <Text style={styles.moreStationsText}>
-                        +{currentSafetyData.safetyFactors.policeStationsDetailed.length - 5} more stations nearby
-                      </Text>
-                    )}
-                  </View>
-                )}
-
-                {/* Risk Areas */}
-                {currentSafetyData.safetyFactors.highRiskAreas.length > 0 && (
-                  <View style={styles.riskSection}>
-                    <Text style={styles.sectionTitle}>⚠️ Areas Needing Attention</Text>
-                    {currentSafetyData.safetyFactors.highRiskAreas.map((risk: string, index: number) => (
-                      <View key={index} style={styles.riskItem}>
-                        <Text style={styles.riskBullet}>•</Text>
-                        <Text style={styles.riskText}>{risk}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
-                {/* Safe Zones */}
-                {currentSafetyData.safetyFactors.safeZones.length > 0 && (
-                  <View style={styles.safeSection}>
-                    <Text style={styles.sectionTitle}>✅ Safe Zones</Text>
-                    {currentSafetyData.safetyFactors.safeZones.map((zone: string, index: number) => (
-                      <View key={index} style={styles.safeItem}>
-                        <Text style={styles.safeBullet}>•</Text>
-                        <Text style={styles.safeText}>{zone}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
-                {/* Safety Recommendations */}
-                <View style={styles.recommendations}>
-                  <Text style={styles.sectionTitle}>🛡️ Safety Recommendations</Text>
-                  <View style={styles.recommendationItem}>
-                    <Text style={styles.recommendationBullet}>•</Text>
-                    <Text style={styles.recommendationText}>Share your live location with trusted contacts</Text>
-                  </View>
-                  <View style={styles.recommendationItem}>
-                    <Text style={styles.recommendationBullet}>•</Text>
-                    <Text style={styles.recommendationText}>Keep emergency numbers handy</Text>
-                  </View>
-                  <View style={styles.recommendationItem}>
-                    <Text style={styles.recommendationBullet}>•</Text>
-                    <Text style={styles.recommendationText}>Avoid poorly lit areas after dark</Text>
-                  </View>
-                  <View style={styles.recommendationItem}>
-                    <Text style={styles.recommendationBullet}>•</Text>
-                    <Text style={styles.recommendationText}>Stay aware of your surroundings</Text>
-                  </View>
-                  {parseFloat(currentSafetyData.safetyFactors.safetyScore) < 7 && (
-                    <View style={styles.recommendationItem}>
-                      <Text style={styles.recommendationBullet}>•</Text>
-                      <Text style={[styles.recommendationText, styles.importantRecommendation]}>
-                        Consider alternative transportation during late hours
-                      </Text>
-                    </View>
-                  )}
-                </View>
-
-                <TouchableOpacity 
-                  style={styles.closeAnalysisButton}
-                  onPress={() => setShowRouteAnalysis(false)}
-                >
-                  <Text style={styles.closeAnalysisButtonText}>Close Analysis</Text>
-                </TouchableOpacity>
-              </ScrollView>
-            )}
-          </View>
-        </View>
-      </Modal>
-    </View>
-  );
-};
-
-const getScoreColor = (score: string) => {
-  const numericScore = parseFloat(score);
-  if (numericScore >= 8) return '#28A745';
-  if (numericScore >= 7) return '#FFC107';
-  if (numericScore >= 6) return '#FF9800';
-  return '#DC3545';
-};
-
-const getScoreDescription = (score: string) => {
-  const numericScore = parseFloat(score);
-  if (numericScore >= 8) return 'Very Safe';
-  if (numericScore >= 7) return 'Safe';
-  if (numericScore >= 6) return 'Moderately Safe';
-  return 'Needs Caution';
-};
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  header: {
-    backgroundColor: 'white',
-    borderBottomWidth: 1,
-    borderBottomColor: '#ddd',
-    paddingHorizontal: 15,
-    paddingTop: 40,
-    paddingBottom: 10,
-    overflow: 'hidden',
-  },
-  headerTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  compactLocation: {
-    flex: 1,
-    marginHorizontal: 10,
-  },
-  compactLocationText: {
-    fontSize: 12,
-    color: '#666',
-    textAlign: 'center',
-    fontWeight: '500',
-  },
-  logoutButton: {
-    padding: 5,
-  },
-  logoutButtonText: {
-    fontSize: 18,
-  },
-  expandButton: {
-    padding: 5,
-  },
-  expandButtonText: {
-    fontSize: 14,
-    color: '#007AFF',
-    fontWeight: 'bold',
-  },
-  searchSection: {
-    marginBottom: 8,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 6,
-    padding: 8,
-    marginBottom: 6,
-    backgroundColor: 'white',
-    fontSize: 12,
-  },
-  quickActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 5,
-  },
-  quickButton: {
-    flex: 1,
-    padding: 8,
-    borderRadius: 6,
-    alignItems: 'center',
-    marginHorizontal: 2,
-  },
-  quickButtonText: {
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 10,
-  },
-  expandableSection: {
-    marginTop: 5,
-  },
-  suggestionButton: {
-    padding: 6,
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  suggestionText: {
-    color: '#007AFF',
-    fontSize: 11,
-    fontWeight: '500',
-  },
-  button: {
-    padding: 10,
-    borderRadius: 6,
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  analysisButton: {
-    backgroundColor: '#FFC107',
-  },
-  buttonText: {
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 11,
-  },
-  quickRouteInfo: {
-    marginTop: 8,
-  },
-  quickRouteTitle: {
-    fontSize: 11,
-    fontWeight: 'bold',
-    color: '#666',
-    marginBottom: 5,
-  },
-  quickRouteItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f8f9fa',
-    padding: 6,
-    borderRadius: 6,
-    marginRight: 8,
-    borderWidth: 1,
-    borderColor: '#ddd',
-  },
-  selectedQuickRoute: {
-    borderColor: '#007AFF',
-    backgroundColor: '#e7f3ff',
-  },
-  routeColorDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 4,
-  },
-  quickRouteText: {
-    fontSize: 10,
-    color: '#333',
-    marginRight: 4,
-  },
-  quickRouteScore: {
-    fontSize: 10,
-    fontWeight: 'bold',
-    color: '#007AFF',
-  },
-  mapContainer: {
-    flex: 1,
-  },
-  webview: {
-    flex: 1,
-  },
-  loadingOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(255,255,255,0.8)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1000,
-  },
-  loadingContent: {
-    backgroundColor: 'white',
-    padding: 30,
-    borderRadius: 15,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
-  },
-  loadingText: {
-    marginTop: 15,
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  loadingSubtext: {
-    marginTop: 5,
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-  },
-  modalContainer: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  modalContent: {
-    backgroundColor: 'white',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    maxHeight: '90%',
-    minHeight: '50%',
-  },
-  closeButton: {
-    position: 'absolute',
-    top: 15,
-    right: 20,
-    backgroundColor: '#DC3545',
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1,
-  },
-  closeButtonText: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  analysisContent: {
-    marginTop: 10,
-  },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 20,
-    color: '#333',
-  },
-  scoreContainer: {
-    padding: 25,
-    borderRadius: 15,
-    alignItems: 'center',
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  scoreText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  scoreValue: {
-    color: 'white',
-    fontSize: 36,
-    fontWeight: 'bold',
-    marginTop: 5,
-  },
-  scoreDescription: {
-    color: 'white',
-    fontSize: 14,
-    marginTop: 5,
-    fontWeight: '500',
-  },
-  routeInfo: {
-    backgroundColor: '#f8f9fa',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 20,
-  },
-  infoTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 10,
-    color: '#333',
-  },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 4,
-  },
-  infoLabel: {
-    fontSize: 14,
-    color: '#666',
-    fontWeight: '500',
-  },
-  infoValue: {
-    fontSize: 14,
-    color: '#333',
-    fontWeight: 'bold',
-  },
-  safetyMetrics: {
-    marginBottom: 20,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 15,
-    color: '#333',
-  },
-  metricsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  metricCard: {
-    width: '48%',
-    backgroundColor: '#f8f9fa',
-    padding: 15,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  metricIcon: {
-    fontSize: 24,
-    marginBottom: 5,
-  },
-  metricValue: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#007AFF',
-    marginBottom: 2,
-  },
-  metricLabel: {
-    fontSize: 12,
-    color: '#666',
-    textAlign: 'center',
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  metricDescription: {
-    fontSize: 10,
-    color: '#999',
-    textAlign: 'center',
-  },
-  policeStationsSection: {
-    backgroundColor: '#e7f3ff',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 20,
-  },
-  policeStationsSubtitle: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 10,
-  },
-  policeStationItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#cce7ff',
-  },
-  policeStationName: {
-    fontSize: 14,
-    color: '#333',
-    flex: 1,
-  },
-  policeStationDistance: {
-    fontSize: 12,
-    color: '#007AFF',
-    fontWeight: '600',
-  },
-  moreStationsText: {
-    fontSize: 12,
-    color: '#666',
-    fontStyle: 'italic',
-    marginTop: 5,
-    textAlign: 'center',
-  },
-  riskSection: {
-    marginBottom: 15,
-    padding: 15,
-    backgroundColor: '#fff3cd',
-    borderRadius: 10,
-    borderLeftWidth: 4,
-    borderLeftColor: '#ffc107',
-  },
-  safeSection: {
-    marginBottom: 15,
-    padding: 15,
-    backgroundColor: '#d4edda',
-    borderRadius: 10,
-    borderLeftWidth: 4,
-    borderLeftColor: '#28a745',
-  },
-  riskItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 6,
-  },
-  riskBullet: {
-    color: '#856404',
-    fontSize: 14,
-    marginRight: 8,
-    fontWeight: 'bold',
-  },
-  riskText: {
-    color: '#856404',
-    fontSize: 14,
-    flex: 1,
-  },
-  safeItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 6,
-  },
-  safeBullet: {
-    color: '#155724',
-    fontSize: 14,
-    marginRight: 8,
-    fontWeight: 'bold',
-  },
-  safeText: {
-    color: '#155724',
-    fontSize: 14,
-    flex: 1,
-  },
-  recommendations: {
-    backgroundColor: '#e7f3ff',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 20,
-  },
-  recommendationItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 8,
-  },
-  recommendationBullet: {
-    color: '#004085',
-    fontSize: 14,
-    marginRight: 8,
-    fontWeight: 'bold',
-  },
-  recommendationText: {
-    fontSize: 14,
-    color: '#004085',
-    flex: 1,
-    lineHeight: 20,
-  },
-  importantRecommendation: {
-    fontWeight: 'bold',
-    color: '#dc3545',
-  },
-  closeAnalysisButton: {
-    backgroundColor: '#6C757D',
-    padding: 15,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  closeAnalysisButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  primaryButton: {
-    backgroundColor: '#007AFF',
-  },
-  secondaryButton: {
-    backgroundColor: '#6C757D',
-  },
-  activeButton: {
-    backgroundColor: '#28A745',
-  },
-  heatmapButton: {
-    backgroundColor: '#FF6B35',
-  },
-});
 
 export default MainScreen;
