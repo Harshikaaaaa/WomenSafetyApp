@@ -34,7 +34,7 @@ const MainScreen: React.FC = () => {
 
   // Emergency contacts - you can customize these
   const EMERGENCY_NUMBER = '100'; // Police emergency number in India
-  const TRUSTED_CONTACT = '911'; // Change this to your trusted contact number
+  const TRUSTED_CONTACT = '9110252207'; // Change this to your trusted contact number
 
   // Get user's current location
   const getUserLocation = async () => {
