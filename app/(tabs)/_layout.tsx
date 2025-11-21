@@ -5,7 +5,7 @@ export default function RootLayout() {
   return (
     <>
       <StatusBar style="light" backgroundColor="transparent" translucent />
-      <Stack>
+      <Stack initialRouteName="login">
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="admin" options={{ headerShown: false }} />
