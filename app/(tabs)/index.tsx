@@ -2,17 +2,17 @@ import * as Location from 'expo-location';
 import { router } from 'expo-router';
 import React, { useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  Linking,
-  Modal,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    Animated,
+    Linking,
+    Modal,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 
@@ -26,6 +26,7 @@ const MainScreen: React.FC = () => {
   const [currentSafetyData, setCurrentSafetyData] = useState<any>(null);
   const [selectedRouteIndex, setSelectedRouteIndex] = useState<number>(0);
   const [isHeaderExpanded, setIsHeaderExpanded] = useState<boolean>(false);
+  const [safetyWeight, setSafetyWeight] = useState<number>(0.7); // 0..1 where 1 = prefer safety, 0 = prefer time
   const [routeOptions, setRouteOptions] = useState<any[]>([]);
   const [userLocation, setUserLocation] = useState<{latitude: number, longitude: number} | null>(null);
   
@@ -112,6 +113,15 @@ const MainScreen: React.FC = () => {
     }).start();
   };
 
+  const handleSetWeight = (w: number) => {
+    setSafetyWeight(w);
+    // notify WebView to re-rank existing routes (if any)
+    webViewRef.current?.injectJavaScript(`
+      window.postMessage({ type: 'SET_WEIGHT', weight: ${w} });
+      true;
+    `);
+  };
+
   const handleMessage = (event: any) => {
     const data = JSON.parse(event.nativeEvent.data);
     
@@ -126,37 +136,12 @@ const MainScreen: React.FC = () => {
     } else if (data.type === 'ROUTES_READY') {
       setIsRouteLoading(false);
       setIsLoading(false);
-      
-      // Sort routes by safety score to ensure consistent ordering
-      const sortedRoutes = data.routes.sort((a: any, b: any) => {
-        return parseFloat(b.safetyFactors.safetyScore) - parseFloat(a.safetyFactors.safetyScore);
-      });
-      
-      // Assign consistent colors and labels based on safety ranking
-      const consistentRoutes = sortedRoutes.map((route: any, index: number) => {
-        let color, label;
-        
-        // Always assign colors based on safety ranking
-        if (index === 0) {
-          color = '#28a745'; // Green for safest
-          label = 'Safest Route';
-        } else if (index === 1) {
-          color = '#ffc107'; // Yellow for balanced
-          label = 'Balanced Route';
-        } else {
-          color = '#dc3545'; // Red for fastest/least safe
-          label = 'Fastest Route';
-        }
-        
-        return {
-          ...route,
-          color,
-          label,
-          originalIndex: route.index // Keep track of original index
-        };
-      });
-      
-      setRouteOptions(consistentRoutes);
+      // Accept routes as ranked by the WebView (they include color/label and combinedScore)
+      const preparedRoutes = data.routes.map((route: any) => ({
+        ...route,
+        originalIndex: route.index,
+      }));
+      setRouteOptions(preparedRoutes);
     } else if (data.type === 'ROUTE_ERROR') {
       setIsRouteLoading(false);
       setIsLoading(false);
@@ -179,7 +164,8 @@ const MainScreen: React.FC = () => {
       window.postMessage({
         type: 'FIND_ROUTE',
         start: '${startLocation}',
-        end: '${endLocation}'
+        end: '${endLocation}',
+        weight: ${safetyWeight}
       });
       true;
     `);
@@ -268,7 +254,7 @@ const MainScreen: React.FC = () => {
         {/* Header Top Bar */}
         <View style={styles.headerTop}>
           <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-            <Text style={styles.logoutButtonText}>👤</Text>
+            <Text style={styles.logoutButtonText}>👤 Logout</Text>
           </TouchableOpacity>
           
           {/* Location display when collapsed */}
@@ -336,6 +322,31 @@ const MainScreen: React.FC = () => {
             <TouchableOpacity onPress={showLocationSuggestions} style={styles.suggestionButton}>
               <Text style={styles.suggestionText}>📍 Need location ideas?</Text>
             </TouchableOpacity>
+            
+            {/* Safety vs Time control */}
+            <View style={styles.weightControl}>
+              <Text style={styles.weightLabel}>Route Preference:</Text>
+              <View style={styles.weightButtons}>
+                <TouchableOpacity
+                  style={[styles.weightButton, safetyWeight >= 0.85 && styles.weightButtonActive]}
+                  onPress={() => handleSetWeight(0.9)}
+                >
+                  <Text style={styles.weightButtonText}>Safety</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.weightButton, safetyWeight >= 0.45 && safetyWeight < 0.85 && styles.weightButtonActive]}
+                  onPress={() => handleSetWeight(0.6)}
+                >
+                  <Text style={styles.weightButtonText}>Balanced</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.weightButton, safetyWeight < 0.45 && styles.weightButtonActive]}
+                  onPress={() => handleSetWeight(0.2)}
+                >
+                  <Text style={styles.weightButtonText}>Fastest</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
             
             <TouchableOpacity 
               style={[styles.button, styles.analysisButton]}
@@ -646,10 +657,18 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   logoutButton: {
-    padding: 5,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#dc3545',
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 90,
   },
   logoutButtonText: {
-    fontSize: 18,
+    fontSize: 14,
+    color: 'white',
+    fontWeight: '600',
   },
   expandButton: {
     padding: 5,
@@ -1114,6 +1133,35 @@ const styles = StyleSheet.create({
   heatmapButton: {
     backgroundColor: '#FF6B35',
   },
+  weightControl: {
+    marginVertical: 8,
+  },
+  weightLabel: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 6,
+    fontWeight: '600',
+  },
+  weightButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  weightButton: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 8,
+    backgroundColor: '#f0f0f0',
+    marginHorizontal: 4,
+  },
+  weightButtonActive: {
+    backgroundColor: '#007AFF',
+  },
+  weightButtonText: {
+    color: '#333',
+    fontWeight: '600',
+    fontSize: 12,
+  },
 });
 
 // Updated HTML content with fixed route color assignment
@@ -1211,6 +1259,7 @@ const htmlContent = `<!DOCTYPE html>
         var heatmapLayer = null;
         var isHeatmapVisible = false;
         var heatmapUpdateInterval = null;
+        var safetyWeight = 0.7; // 0..1 where 1 favors safety, 0 favors time
 
         // Hardcoded Bangalore police stations for route analysis
         var hardcodedPoliceStations = [
@@ -1669,11 +1718,12 @@ const htmlContent = `<!DOCTYPE html>
                         var coordinates = routeData.geometry.coordinates;
                         var routePoints = coordinates.map(coord => [coord[1], coord[0]]);
                         
+                        // Draw route with neutral color first; final colors assigned after scoring
                         var polyline = L.polyline(routePoints, {
-                            color: color,
-                            weight: 6,
-                            opacity: index === 0 ? 0.9 : 0.6,
-                            dashArray: index === 2 ? '5,10' : null
+                          color: '#888888',
+                          weight: 6,
+                          opacity: index === 0 ? 0.9 : 0.6,
+                          dashArray: index === 2 ? '5,10' : null
                         }).addTo(map);
                         
                         routePolylines.push(polyline);
@@ -1740,11 +1790,12 @@ const htmlContent = `<!DOCTYPE html>
                 routePoints.push([lat, lng]);
             }
             
+            // Draw route with neutral color first; final colors will be assigned after scoring
             var polyline = L.polyline(routePoints, {
-                color: color,
-                weight: 6,
-                opacity: index === 0 ? 0.9 : 0.6,
-                dashArray: index === 2 ? '5,10' : null
+              color: '#888888',
+              weight: 6,
+              opacity: index === 0 ? 0.9 : 0.6,
+              dashArray: index === 2 ? '5,10' : null
             }).addTo(map);
             
             routePolylines.push(polyline);
@@ -1900,48 +1951,41 @@ const htmlContent = `<!DOCTYPE html>
             if (routesCompleted >= totalRoutesExpected) {
                 hideLoading();
                 showRouteControls();
-                updateRouteButtons();
-                
-                // Sort routes by safety score to ensure consistent ordering
-                currentRoutes.sort((a, b) => {
-                    return parseFloat(b.safetyFactors.safetyScore) - parseFloat(a.safetyFactors.safetyScore);
-                });
-                
-                window.ReactNativeWebView.postMessage(JSON.stringify({
-                    type: 'ROUTES_READY',
-                    routes: currentRoutes
-                }));
+                // use recomputeRanking which will assign colors and post results
+                recomputeRanking();
             }
         }
 
         function selectRoute(index) {
-            selectedRouteIndex = index;
-            
-            // Update polyline opacities
-            routePolylines.forEach((polyline, i) => {
-                if (polyline) {
-                    polyline.setStyle({
-                        opacity: i === index ? 0.9 : 0.3,
-                        weight: i === index ? 8 : 4
-                    });
-                }
-            });
-            
-            // Show police stations for selected route
-            if (currentRoutes[index]) {
-                showRoutePoliceStations(currentRoutes[index].route);
+          // 'index' here is the original route index (the index used when creating polylines)
+          selectedRouteIndex = index;
+
+          // Update polyline opacities using the original polyline index
+          routePolylines.forEach((polyline, i) => {
+            if (polyline) {
+              polyline.setStyle({
+                opacity: i === index ? 0.9 : 0.3,
+                weight: i === index ? 8 : 4
+              });
             }
-            
-            updateRouteButtons();
-            
-            // Notify React Native
-            if (currentRoutes[index]) {
-                window.ReactNativeWebView.postMessage(JSON.stringify({
-                    type: 'ROUTE_SELECTED',
-                    index: index,
-                    route: currentRoutes[index]
-                }));
-            }
+          });
+
+          // Find the route object that matches this original index
+          var routeObj = currentRoutes.find(function(r) { return r.index === index; });
+          if (routeObj) {
+            showRoutePoliceStations(routeObj.route);
+          }
+
+          updateRouteButtons();
+
+          // Notify React Native with the route object (found by original index)
+          if (routeObj) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'ROUTE_SELECTED',
+              index: index,
+              route: routeObj
+            }));
+          }
         }
 
         function updateRouteButtons() {
@@ -1961,23 +2005,82 @@ const htmlContent = `<!DOCTYPE html>
                 routeButton.style.opacity = index === selectedRouteIndex ? '1' : '0.7';
                 routeButton.style.fontWeight = index === selectedRouteIndex ? 'bold' : 'normal';
                 
-                routeButton.onclick = function() {
-                    selectRoute(index);
-                };
+            // When clicked, select the route by its original index (route.index)
+            routeButton.onclick = function() {
+              selectRoute(route.index);
+            };
                 
                 var shieldButton = document.createElement('button');
                 shieldButton.className = 'shield-button';
                 shieldButton.innerHTML = '🛡️';
                 shieldButton.title = 'Show Safety Analysis';
                 
-                shieldButton.onclick = function() {
-                    analyzeSpecificRoute(index);
-                };
+            // Analyze the specific route by its original index
+            shieldButton.onclick = function() {
+              analyzeSpecificRoute(route.index);
+            };
                 
                 buttonContainer.appendChild(routeButton);
                 buttonContainer.appendChild(shieldButton);
                 buttonsDiv.appendChild(buttonContainer);
             });
+        }
+
+        // Recompute ranking using safetyWeight and update map/UI
+        function recomputeRanking() {
+          if (!currentRoutes || currentRoutes.length === 0) return;
+
+          // compute min/max duration for normalization
+          var minDur = Number.MAX_VALUE, maxDur = 0;
+          currentRoutes.forEach(function(r) {
+            if (r.duration < minDur) minDur = r.duration;
+            if (r.duration > maxDur) maxDur = r.duration;
+          });
+
+          currentRoutes.forEach(function(route) {
+            var safetyNumeric = 0;
+            try {
+              safetyNumeric = parseFloat((route.safetyFactors && route.safetyFactors.safetyScore) ? route.safetyFactors.safetyScore : 0);
+            } catch (e) { safetyNumeric = 0; }
+            var safetyNorm = Math.min(10, Math.max(0, safetyNumeric)) / 10; // 0..1
+
+            var duration = route.duration || 0;
+            var durationNorm = 0.5;
+            if (maxDur > minDur) durationNorm = (duration - minDur) / (maxDur - minDur);
+            // lower duration is better, so use (1 - durationNorm)
+
+            route.combinedScore = safetyWeight * safetyNorm + (1 - safetyWeight) * (1 - durationNorm);
+          });
+
+          // sort by combinedScore desc
+          currentRoutes.sort(function(a, b) {
+            return (b.combinedScore || 0) - (a.combinedScore || 0);
+          });
+
+          // Assign colors based on ranking and update polylines
+          var rankColors = ['#28a745', '#ffc107', '#dc3545'];
+          currentRoutes.forEach(function(route, sortedIndex) {
+            var assignedColor = rankColors[sortedIndex] || '#dc3545';
+            route.color = assignedColor;
+            route.label = sortedIndex === 0 ? 'Safest Route' : (sortedIndex === 1 ? 'Balanced Route' : 'Fastest Route');
+
+            var poly = routePolylines[route.index];
+            if (poly) {
+              poly.setStyle({
+                color: assignedColor,
+                opacity: route.index === selectedRouteIndex ? 0.9 : 0.6,
+                weight: route.index === selectedRouteIndex ? 8 : 6
+              });
+            }
+          });
+
+          updateRouteButtons();
+
+          // Notify React Native with the finalized ranked routes
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'ROUTES_READY',
+            routes: currentRoutes
+          }));
         }
 
         function calculateRouteDistance(routePoints) {
@@ -2021,6 +2124,10 @@ const htmlContent = `<!DOCTYPE html>
             try {
                 var data = event.data;
                 if (data.type === 'FIND_ROUTE') {
+                  // accept optional weight param
+                  if (data.weight !== undefined && data.weight !== null) {
+                    safetyWeight = parseFloat(data.weight) || safetyWeight;
+                  }
                     geocodeLocation(data.start, function(startLocation) {
                         if (!startLocation) {
                             alert('Start location not found. Please try a different name.');
@@ -2040,6 +2147,10 @@ const htmlContent = `<!DOCTYPE html>
                             drawRoutes(startLocation, endLocation);
                         });
                     });
+                        } else if (data.type === 'SET_WEIGHT') {
+                          safetyWeight = parseFloat(data.weight) || safetyWeight;
+                          // re-rank existing routes immediately
+                          recomputeRanking();
                 } else if (data.type === 'TOGGLE_POLICE') {
                     var isVisible = togglePoliceStations();
                     window.ReactNativeWebView.postMessage(JSON.stringify({
