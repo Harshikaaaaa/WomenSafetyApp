@@ -1,7 +1,6 @@
 // admin.tsx - Updated with heatmap WebView
 import { router } from 'expo-router';
 import React, { useRef } from 'react';
-import { supabase } from '../../utils/supabase';
 import {
     Alert,
     ScrollView,
@@ -11,6 +10,7 @@ import {
     View,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
+import { supabase } from '../../utils/supabase';
 
 const AdminScreen: React.FC = () => {
   const webViewRef = useRef<WebView>(null);
