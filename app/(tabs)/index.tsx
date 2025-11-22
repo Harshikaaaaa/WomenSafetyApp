@@ -1,6 +1,6 @@
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -15,6 +15,7 @@ import {
     View,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
+import { supabase } from '../../utils/supabase';
 
 const MainScreen: React.FC = () => {
   const [startLocation, setStartLocation] = useState<string>('');
@@ -56,6 +57,22 @@ const MainScreen: React.FC = () => {
       return null;
     }
   };
+
+  // Ensure unauthenticated users are redirected to login on native
+  useEffect(() => {
+    (async () => {
+      try {
+        const sessionRes: any = await supabase.auth.getSession();
+        const session = sessionRes?.data?.session;
+        if (!session) {
+          // No active session - make sure login is shown
+          router.replace('/login');
+        }
+      } catch (err) {
+        console.warn('Error checking supabase session:', err);
+      }
+    })();
+  }, []);
 
   // Emergency call function
   const handleEmergencyCall = () => {
@@ -147,7 +164,19 @@ const MainScreen: React.FC = () => {
       setIsLoading(false);
       Alert.alert('Error', 'Could not find route. Please try different locations.');
     } else if (data.type === 'ROUTE_SELECTED') {
-      setSelectedRouteIndex(data.index);
+      // WebView sends originalIndex; convert to routeOptions array index
+      const idx = routeOptions.findIndex((r: any) => r.originalIndex === data.index);
+      setSelectedRouteIndex(idx !== -1 ? idx : 0);
+    } else if (data.type === 'LOGOUT') {
+      // Sign out via Supabase and navigate back to login
+      (async () => {
+        try {
+          await supabase.auth.signOut();
+        } catch (err) {
+          console.warn('Error signing out:', err);
+        }
+        router.replace('/login');
+      })();
     }
   };
 
@@ -242,7 +271,14 @@ const MainScreen: React.FC = () => {
       'Are you sure you want to logout?',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Logout', onPress: () => router.replace('/login') }
+        { text: 'Logout', onPress: async () => {
+          try {
+            await supabase.auth.signOut();
+          } catch (err) {
+            console.warn('Error signing out:', err);
+          }
+          router.replace('/login');
+        } }
       ]
     );
   };
@@ -402,6 +438,8 @@ const MainScreen: React.FC = () => {
           onMessage={handleMessage}
         />
       </View>
+
+      {/* Route list overlay removed to prevent blocking the map */}
 
       {/* Emergency Buttons at Bottom */}
       <View style={styles.emergencyContainer}>
@@ -1162,6 +1200,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 12,
   },
+  // route list overlay styles removed
 });
 
 // Updated HTML content with fixed route color assignment
@@ -1201,6 +1240,7 @@ const htmlContent = `<!DOCTYPE html>
             z-index: 1000;
             display: none;
         }
+          /* logout button removed for user map view */
         .route-button-container {
             display: flex;
             align-items: center;
@@ -2168,6 +2208,8 @@ const htmlContent = `<!DOCTYPE html>
                 console.error('Error processing message:', error);
             }
         });
+
+          // (logout button removed)
     </script>
 </body>
 </html>`;

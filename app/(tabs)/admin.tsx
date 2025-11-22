@@ -1,13 +1,14 @@
 // admin.tsx - Updated with heatmap WebView
 import { router } from 'expo-router';
 import React, { useRef } from 'react';
+import { supabase } from '../../utils/supabase';
 import {
-  Alert,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    Alert,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 
@@ -23,18 +24,16 @@ const AdminScreen: React.FC = () => {
     <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
     <style>
         body { margin: 0; padding: 0; }
-        #map { height: 100vh; width: 100vw; }
-        .info-panel {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            background: white;
-            padding: 15px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-            z-index: 1000;
-            max-width: 300px;
-        }
+      #map { height: 60vh; width: 100vw; }
+      .info-panel {
+        position: relative;
+        margin: 12px auto;
+        background: white;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        max-width: 95%;
+      }
         .hotspot-marker {
             background: #ff4444;
             border-radius: 50%;
@@ -181,7 +180,14 @@ const AdminScreen: React.FC = () => {
       'Are you sure you want to logout?',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Logout', onPress: () => router.replace('/login') }
+        { text: 'Logout', onPress: async () => {
+          try {
+            await supabase.auth.signOut();
+          } catch (err) {
+            console.warn('Error signing out (admin):', err);
+          }
+          router.replace('/login');
+        } }
       ]
     );
   };

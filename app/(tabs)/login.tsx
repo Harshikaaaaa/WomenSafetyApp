@@ -10,52 +10,47 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { supabase, SUPABASE_URL } from '../../utils/supabase';
 
 const LoginScreen: React.FC = () => {
+  const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  // Hardcoded credentials
-  const ADMIN_PASSWORD = 'admin123';
-  const USER_PASSWORD = 'user123';
-
-  const handleLogin = (userType: 'user' | 'admin') => {
-    const correctPassword = userType === 'admin' ? ADMIN_PASSWORD : USER_PASSWORD;
-    
-    if (password === correctPassword) {
-      setIsLoading(true);
-      setTimeout(() => {
-        setIsLoading(false);
-        if (userType === 'admin') {
-          router.replace('/admin');
-        } else {
-          router.replace('/');
-        }
-      }, 1000);
-    } else {
-      Alert.alert('Error', 'Incorrect password!');
+  const handleLogin = async () => {
+    if (!email || !password) {
+      Alert.alert('Error', 'Please enter both email and password');
+      return;
     }
-  };
 
-  const handleQuickAccess = () => {
-    Alert.alert(
-      'Quick Access',
-      'Choose your access level:',
-      [
-        {
-          text: 'User Access',
-          onPress: () => router.replace('/')
-        },
-        {
-          text: 'Admin Access',
-          onPress: () => router.replace('/admin')
-        },
-        {
-          text: 'Cancel',
-          style: 'cancel'
-        }
-      ]
-    );
+    try {
+      setIsLoading(true);
+
+      // Debug: log endpoint so you can verify it's the expected supabase project
+      console.log('Attempting sign-in to Supabase URL:', SUPABASE_URL);
+
+      const res = await supabase.auth.signInWithPassword({ email, password });
+      setIsLoading(false);
+
+      if (res.error) {
+        console.error('Supabase signIn error object:', res.error);
+        Alert.alert('Login failed', res.error.message || 'Unknown error');
+        return;
+      }
+
+      // On success, route based on the signed-in user's email.
+      const signedInEmail = (res.data as any)?.user?.email || email;
+      if (signedInEmail === 'admin@app.com') {
+        router.replace('/admin');
+      } else {
+        router.replace('/');
+      }
+    } catch (err: any) {
+      setIsLoading(false);
+      // Log full error for debugging network issues
+      console.error('Sign-in threw:', err);
+      Alert.alert('Login error', err.message || String(err));
+    }
   };
 
   return (
@@ -65,45 +60,35 @@ const LoginScreen: React.FC = () => {
     >
       <View style={styles.content}>
         <Text style={styles.title}>🚨 Safe Route Finder</Text>
-        <Text style={styles.subtitle}>Choose your access level</Text>
+        <Text style={styles.subtitle}>Sign in to continue</Text>
 
         <View style={styles.loginSection}>
           <TextInput
             style={styles.input}
-            placeholder="Enter password"
+            placeholder="Email"
+            value={email}
+            onChangeText={setEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            placeholderTextColor="#999"
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Password"
             value={password}
             onChangeText={setPassword}
             secureTextEntry
             placeholderTextColor="#999"
           />
-          
-          <View style={styles.buttonContainer}>
-            <TouchableOpacity 
-              style={[styles.button, styles.userButton]}
-              onPress={() => handleLogin('user')}
-              disabled={isLoading}
-            >
-              <Text style={styles.buttonText}>👤 User Login</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={[styles.button, styles.adminButton]}
-              onPress={() => handleLogin('admin')}
-              disabled={isLoading}
-            >
-              <Text style={styles.buttonText}>🛡️ Admin Login</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
 
-        <TouchableOpacity onPress={handleQuickAccess} style={styles.quickAccessButton}>
-          <Text style={styles.quickAccessText}>🚀 Quick Access (No Password)</Text>
-        </TouchableOpacity>
-
-        <View style={styles.hintSection}>
-          <Text style={styles.hintTitle}>Password Hints:</Text>
-          <Text style={styles.hint}>👤 User: user123</Text>
-          <Text style={styles.hint}>🛡️ Admin: admin123</Text>
+          <TouchableOpacity
+            style={[styles.button, styles.primaryButton]}
+            onPress={handleLogin}
+            disabled={isLoading}
+          >
+            <Text style={styles.buttonText}>{isLoading ? 'Signing in...' : 'Login'}</Text>
+          </TouchableOpacity>
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -151,34 +136,17 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginBottom: 20,
   },
-  buttonContainer: {
-    gap: 12,
-  },
   button: {
     padding: 16,
     borderRadius: 10,
     alignItems: 'center',
   },
-  userButton: {
+  primaryButton: {
     backgroundColor: '#007AFF',
-  },
-  adminButton: {
-    backgroundColor: '#FF6B35',
   },
   buttonText: {
     color: 'white',
     fontSize: 16,
-    fontWeight: 'bold',
-  },
-  quickAccessButton: {
-    padding: 15,
-    backgroundColor: '#4CAF50',
-    borderRadius: 10,
-    marginBottom: 30,
-  },
-  quickAccessText: {
-    color: 'white',
-    fontSize: 14,
     fontWeight: 'bold',
   },
   hintSection: {
